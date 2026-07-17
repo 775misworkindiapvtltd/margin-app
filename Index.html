@@ -666,7 +666,9 @@ function renderDataTable(tableKey){
   if(st.page>tp)st.page=tp;if(st.page<1)st.page=1;
   const si=(st.page-1)*ps;const pageRows=rows.slice(si,si+ps);
   const visCols=def.cols.filter(c=>!st.hidden.has(c.key));
-  const hdr=visCols.map(c=>{
+  // S.No column — fixed reference counter, not sortable, always sequential
+  const snoTh=`<th style="width:60px;min-width:60px;max-width:60px;"><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">S.No</span></div></div></th>`;
+  const hdr=snoTh+visCols.map(c=>{
     const w=st.widths[c.key]||c.width||150;const si2=st.sort===c.key?(st.dir===1?'▲':'▼'):'';const fo=st.filterOpen===c.key;
     return `<th style="width:${w}px;min-width:${w}px;max-width:${w}px;" data-col="${c.key}">
       <div class="th-inner"><div class="th-row">
@@ -678,7 +680,7 @@ function renderDataTable(tableKey){
       <div class="resize-handle" data-action="resize" data-table="${tableKey}" data-col="${c.key}"></div>
       </div></th>`;
   }).join("");
-  const bod=pageRows.length?pageRows.map(r=>`<tr>${visCols.map(c=>{const v=r[c.key]==null?"":r[c.key];return`<td>${c.pill&&v?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
+  const bod=pageRows.length?pageRows.map((r,idx)=>`<tr><td style="text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px;">${si+idx+1}</td>${visCols.map(c=>{const v=r[c.key]==null?"":r[c.key];return`<td>${c.pill&&v?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length+1}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
   const rf=total===0?0:si+1;const rt=Math.min(si+ps,total);
   return `
     <div class="dt-toolbar">
