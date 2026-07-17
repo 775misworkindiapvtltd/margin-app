@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<base target="_top">
+<title>Margin Entry Form</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<!-- flatpickr date picker (calendar) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<style>
+:root{
+  --sidebar:#0C1017;--sidebar-hover:#151B24;--sidebar-active:#1A2130;--sidebar-line:#1E2531;
+  --bg:#F2F1ED;--surface:#FFFFFF;--ink:#1A1712;--ink-secondary:#48443D;--muted:#8A8479;
+  --line:#E2DED6;--line-light:#EEECE6;--accent:#B4862B;--accent-dark:#8C6720;--accent-tint:#F6ECD6;--accent-tint2:#FDF8EE;
+  --danger:#C4291C;--danger-tint:#FBEAE9;--success:#2E7D46;--success-tint:#E5F5EA;
+  --equity:#2563EB;--equity-tint:#EFF6FF;--commodity:#B4862B;--commodity-tint:#F6ECD6;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:13px;}
+#app{height:100vh;}
+h1,h2,h3,.disp{font-family:'Space Grotesk',sans-serif;}
+input,select,button{font-family:inherit;font-size:13px;}
+::selection{background:var(--accent-tint);}
+::-webkit-scrollbar{width:7px;height:7px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#CCC8BE;border-radius:10px;}
+::-webkit-scrollbar-thumb:hover{background:var(--accent);}
+
+.loading-screen{height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--muted);background:var(--bg);}
+.spinner{width:28px;height:28px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.login-wrap{height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#0C1017 0%,#151B24 50%,#1A2130 100%);padding:20px;}
+.login-card{width:400px;background:var(--surface);border-radius:12px;box-shadow:0 40px 80px -30px rgba(0,0,0,.6);overflow:hidden;}
+.login-top{background:linear-gradient(135deg,#0C1017,#1A2130);color:#EDE6D6;padding:32px 34px 26px;border-bottom:3px solid var(--accent);}
+.login-eyebrow{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.2em;color:var(--accent);text-transform:uppercase;}
+.login-top h1{font-size:22px;margin:8px 0 0;font-weight:600;letter-spacing:-.01em;color:#fff;}
+.login-body{padding:30px 34px 34px;}
+.field{margin-bottom:18px;}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px;}
+.field input{width:100%;padding:11px 14px;border:1.5px solid var(--line);border-radius:8px;background:#FAFAF7;color:var(--ink);transition:border .15s,box-shadow .15s;}
+.field input:focus{outline:none;border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--accent-tint);}
+.btn{border:none;border-radius:8px;padding:11px 18px;font-weight:600;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s;}
+.btn:active{transform:scale(.98);}
+.btn-gold{background:linear-gradient(135deg,#C69530,#A07520);color:#fff;box-shadow:0 2px 8px rgba(180,134,43,.3);}
+.btn-gold:hover{box-shadow:0 4px 14px rgba(180,134,43,.4);filter:brightness(1.05);}
+.btn-ghost{background:transparent;color:var(--muted);border:1.5px solid var(--line);}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent-dark);background:var(--accent-tint2);}
+.btn-block{width:100%;justify-content:center;}
+.login-error{background:var(--danger-tint);color:var(--danger);font-size:12.5px;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-weight:500;}
+.login-hint{margin-top:18px;font-size:11.5px;color:var(--muted);line-height:1.6;border-top:1px dashed var(--line);padding-top:14px;}
+.login-hint b{color:var(--ink);}
+
+.shell{display:flex;height:100vh;overflow:hidden;}
+.sidebar{width:210px;flex:none;background:var(--sidebar);color:#A8A297;display:flex;flex-direction:column;height:100vh;border-right:1px solid var(--sidebar-line);}
+.brand{padding:14px 14px 12px;border-bottom:1px solid var(--sidebar-line);}
+.brand-icon{width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,var(--accent),#C6952F);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk';font-weight:700;font-size:12px;margin-bottom:8px;}
+.brand .eyebrow{font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:.2em;color:#6B6560;text-transform:uppercase;}
+.brand h1{font-size:13px;margin:2px 0 0;color:#F0EAD8;font-weight:600;letter-spacing:-.01em;}
+.nav{flex:1;padding:8px 6px;overflow-y:auto;}
+.nav-section{margin-bottom:4px;}
+.nav-parent{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:6px;color:#E8E0D0;font-size:12px;font-weight:700;cursor:pointer;transition:background .12s,color .12s;letter-spacing:.04em;}
+.nav-parent:hover{background:var(--sidebar-hover);}
+.nav-parent .arrow{margin-left:auto;font-size:9px;transition:transform .2s;color:#6B6560;}
+.nav-parent.open .arrow{transform:rotate(90deg);color:var(--accent);}
+.nav-parent .p-icon{width:16px;height:16px;opacity:.7;display:flex;align-items:center;justify-content:center;}
+.nav-children{padding:2px 0;display:none;}
+.nav-children.show{display:block;}
+.nav-group-label{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:#5A5F68;font-weight:700;padding:8px 10px 3px 20px;}
+.nav-child{display:flex;align-items:center;gap:7px;padding:7px 10px 7px 30px;border-radius:6px;color:#8E887D;font-size:11.5px;font-weight:500;cursor:pointer;transition:background .12s,color .12s;position:relative;}
+.nav-child::before{content:'';position:absolute;left:16px;top:50%;width:4px;height:4px;border-radius:50%;background:#3A3F48;transform:translateY(-50%);transition:background .15s;}
+.nav-child:hover{background:var(--sidebar-hover);color:#E8E0D0;}
+.nav-child:hover::before{background:#6B6560;}
+.nav-child.active{background:var(--sidebar-active);color:#F0EAD8;}
+.nav-child.active::before{background:var(--accent);box-shadow:0 0 6px rgba(180,134,43,.4);}
+.nav-empty{font-size:10.5px;color:#5A5F68;padding:8px 10px 8px 30px;font-style:italic;}
+.sidebar-foot{padding:10px 10px 14px;border-top:1px solid var(--sidebar-line);}
+.logout-btn{font-size:11px;color:#8E887D;cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;transition:all .12s;}
+.logout-btn:hover{background:var(--sidebar-hover);color:#E8E0D0;}
+
+.main{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);}
+.topbar{background:var(--surface);border-bottom:1px solid var(--line);padding:0 16px;height:36px;display:flex;align-items:center;justify-content:space-between;flex:none;}
+.topbar-left{display:flex;align-items:center;gap:10px;}
+.topbar-left h2{font-size:13px;font-weight:600;}
+.seg-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:20px;}
+.seg-badge.equity{background:var(--equity-tint);color:var(--equity);}
+.seg-badge.commodity{background:var(--commodity-tint);color:var(--accent-dark);}
+.topbar-right{display:flex;align-items:center;gap:12px;}
+.topbar-clock{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-secondary);background:var(--bg);padding:4px 8px;border-radius:6px;font-weight:500;}
+.topbar-welcome{font-size:11px;color:var(--ink-secondary);font-weight:500;}
+.topbar-welcome b{color:var(--ink);font-weight:600;}
+.avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#C6952F);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk';font-weight:700;font-size:11px;flex:none;}
+.content{padding:6px 12px 6px;flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+
+.toast{position:fixed;top:16px;right:16px;z-index:100;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.12);display:flex;align-items:center;gap:10px;animation:toast-in .22s cubic-bezier(.2,.8,.4,1);background:var(--success-tint);color:var(--success);border:1px solid #BEE3C9;}
+@keyframes toast-in{from{opacity:0;transform:translateY(-10px) scale(.96);}to{opacity:1;transform:none;}}
+.toast.err{background:var(--danger-tint);color:var(--danger);border-color:#F3C6C3;}
+
+.entry-toolbar{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 12px;display:flex;align-items:center;gap:12px;margin-bottom:4px;flex:none;}
+.date-field{display:flex;align-items:center;gap:6px;}
+.date-field label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;}
+.date-field input.flatpickr-alt,.date-field input#entryDate{padding:5px 10px;border:1.5px solid var(--line);border-radius:4px;background:#FAFAF7;font-size:12px;color:var(--ink);cursor:pointer;font-family:'JetBrains Mono',monospace;font-weight:600;width:140px;text-align:center;}
+.date-field input.flatpickr-alt:focus,.date-field input#entryDate:focus{outline:none;border-color:var(--accent);background:#fff;box-shadow:0 0 0 2px var(--accent-tint);}
+.date-field input.flatpickr-alt::placeholder{color:var(--muted);font-weight:500;}
+.flatpickr-day.selected,.flatpickr-day.selected:hover,.flatpickr-day.startRange,.flatpickr-day.endRange{background:var(--accent);border-color:var(--accent);}
+.flatpickr-day.today{border-color:var(--accent);}
+.req-star{color:var(--danger);}
+
+.entry-panels{display:flex;gap:8px;flex:1;min-height:0;overflow:hidden;}
+.entry-panel{display:flex;flex-direction:column;min-height:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow:hidden;}
+.entry-panel-main{flex:3;}
+.entry-panel-side{flex:1;min-width:260px;}
+.panel-head{padding:3px 10px;font-size:10px;font-weight:700;color:var(--ink-secondary);border-bottom:1px solid var(--line-light);background:var(--accent-tint2);display:flex;align-items:center;gap:6px;flex:none;}
+.panel-count{font-weight:500;color:var(--muted);font-size:9.5px;}
+.panel-foot{padding:4px 8px;border-top:1px solid var(--line-light);flex:none;display:flex;align-items:center;gap:8px;}
+.entry-scroll{flex:1;min-height:0;overflow:auto;}
+table.entry{border-collapse:separate;border-spacing:0;}
+table.entry thead th{background:#0F141B;color:#D6CFC0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:11px 10px;text-align:left;white-space:nowrap;font-weight:600;position:sticky;top:0;z-index:2;position:relative;}
+table.entry thead th .eresize{position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:3;}
+table.entry thead th .eresize:hover{background:rgba(180,134,43,.5);}
+table.entry thead th.blk-a{background:#0F141B;}
+table.entry thead th.blk-b{background:#1A1710;}
+table.entry tbody td{padding:4px 5px;border-bottom:1px solid var(--line-light);vertical-align:middle;position:relative;}
+table.entry tbody tr:nth-child(even){background:#FAFAF7;}
+table.entry tbody tr:hover{background:var(--accent-tint2);}
+table.entry tbody td:last-child .row-resize{position:absolute;left:0;right:0;bottom:-2px;height:5px;cursor:row-resize;z-index:1;}
+table.entry tbody td:last-child .row-resize:hover{background:rgba(180,134,43,.3);}
+table.entry .rownum{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);text-align:center;width:28px;}
+table.entry input{width:100%;padding:7px 9px;border:1.5px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);transition:border .15s;}
+table.entry input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-tint);}
+table.entry input.cell-error,table.entry .cell-ro.cell-error{border-color:var(--danger);background:#FEF2F2;}
+table.entry input.cell-error:focus{border-color:var(--danger);box-shadow:0 0 0 2px var(--danger-tint);}
+table.entry input.num{font-family:'JetBrains Mono',monospace;text-align:right;}
+.cell-ro{padding:6px 8px;font-size:11.5px;color:#5A564F;background:#F5F4F0;border:1px solid #ECEAE4;border-radius:6px;min-height:30px;line-height:1.35;word-break:break-word;overflow-wrap:anywhere;white-space:normal;}
+.trash-btn{border:none;background:transparent;color:var(--danger);cursor:pointer;padding:6px;border-radius:6px;line-height:1;display:inline-flex;align-items:center;justify-content:center;opacity:.6;transition:all .15s;}
+.trash-btn:hover{background:var(--danger-tint);opacity:1;}
+
+.dt-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex:none;flex-wrap:wrap;}
+.dt-toolbar .count{font-size:12px;color:var(--muted);font-weight:500;}
+.dt-colmenu-wrap{position:relative;margin-left:auto;}
+.dt-colmenu{position:absolute;right:0;top:38px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.12);padding:12px;min-width:200px;z-index:20;}
+.dt-colmenu .h{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.08em;font-weight:700;margin-bottom:8px;}
+.dt-colmenu label{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:5px 4px;cursor:pointer;border-radius:4px;}
+.dt-colmenu label:hover{background:var(--accent-tint2);}
+.dt-table-wrap{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.dt-scroll{flex:1;overflow:auto;min-height:0;}
+table.dt{border-collapse:separate;border-spacing:0;table-layout:fixed;width:auto;min-width:100%;}
+table.dt thead th{position:sticky;top:0;background:#0F141B;color:#D6CFC0;z-index:4;padding:0;border-right:1px solid #1E2531;overflow:hidden;}
+table.dt thead th .th-inner{padding:9px 12px;display:flex;flex-direction:column;gap:5px;position:relative;min-height:36px;}
+table.dt thead th .th-row{display:flex;align-items:center;gap:6px;}
+table.dt thead th .th-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+table.dt thead th .sort-ic{font-size:9px;color:var(--accent);width:10px;flex:none;}
+table.dt thead th .search-ic{margin-left:auto;cursor:pointer;color:#6B7280;flex:none;font-size:11px;transition:color .15s;}
+table.dt thead th .search-ic:hover{color:var(--accent);}
+table.dt thead th .th-filter input{width:100%;padding:5px 8px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:11.5px;}
+table.dt thead th .th-filter input::placeholder{color:#5A6070;}
+table.dt thead th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5;}
+table.dt thead th .resize-handle:hover,table.dt thead th .resize-handle.active{background:rgba(180,134,43,.5);}
+table.dt tbody td{padding:8px 12px;border-bottom:1px solid var(--line-light);border-right:1px solid #F2F0EA;font-size:12.5px;white-space:normal;word-break:break-word;vertical-align:top;overflow-wrap:anywhere;}
+table.dt tbody tr:nth-child(even){background:#FAFAF7;}
+table.dt tbody tr:hover{background:var(--accent-tint2);}
+.code-pill{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:var(--accent-dark);background:var(--accent-tint);border-radius:5px;padding:3px 8px;display:inline-block;}
+.empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
+.empty-state .big{font-family:'Space Grotesk',sans-serif;font-size:15px;color:var(--ink-secondary);margin-bottom:6px;font-weight:600;}
+.dt-pagination{display:flex;align-items:center;gap:16px;flex-wrap:wrap;flex:none;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px;font-size:12px;color:var(--muted);font-weight:500;}
+.dt-pagination .pp{display:flex;align-items:center;gap:8px;}
+.dt-pagination select{padding:5px 10px;border:1.5px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;}
+.dt-pagination .nav{display:flex;align-items:center;gap:4px;margin-left:auto;}
+.dt-pagination .nav button{border:1.5px solid var(--line);background:#fff;border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600;color:var(--ink-secondary);font-size:12px;transition:all .12s;}
+.dt-pagination .nav button:disabled{opacity:.35;cursor:default;}
+.dt-pagination .nav button:not(:disabled):hover{border-color:var(--accent);color:var(--accent-dark);background:var(--accent-tint2);}
+.dt-pagination .pageinfo{font-weight:600;color:var(--ink-secondary);white-space:nowrap;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ============================= CONFIG ============================= */
+const MIN_ROWS = 20;
+const PAGE_SIZE_OPTIONS = [50,100,500,1000];
+// Auto-logout: is time par (24-hour "HH:MM") logged-in user apne aap logout ho jayega.
+// "00:00" = raat 12 baje (midnight). Time badalne ke liye sirf yahan change karo, e.g. "23:30" = 11:30 PM.
+const AUTO_LOGOUT_TIME = "23:59";
+
+/* ============================= STATE ============================= */
+function dtState(){return{sort:null,dir:1,hidden:new Set(),filters:{},filterOpen:null,widths:{},page:1,pageSize:50};}
+function blankRowA(){return{code:"",userId:"",software:"",name:"",group:"",branchName:"",marginRMS:"",marginAllocated:""};}
+function blankRowB(){return{group:"",margin:""};}
+function freshSeg(){return{date:"",rowsA:Array.from({length:MIN_ROWS},blankRowA),rowsB:Array.from({length:10},blankRowB)};}
+
+let S = {
+  ready:false, loadError:"", user:null, page:null, syncing:false, sidebarOpen:false,
+  masterEquity:[], masterCommodity:[],
+  respEquity:[], respCommodity:[], resp2Equity:[], resp2Commodity:[],
+  users:[], branchName:[], branchError:"", missingSheets:[],
+  entry:{ equity:freshSeg(), commodity:freshSeg() },
+  toast:null, loginError:"",
+  dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
+  colMenuOpen:null, entryWidths:{}, logoutAt:0,
+};
+try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
+function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
+function freshRows(){ S.entry={equity:freshSeg(),commodity:freshSeg()}; }
+
+/* ============================= APPS SCRIPT BRIDGE ============================= */
+function runServer(fnName,arg){
+  return new Promise((resolve,reject)=>{
+    if(typeof google==='undefined'||!google.script||!google.script.run){
+      reject(new Error("google.script.run not available — open this page via the Apps Script /exec URL."));return;
+    }
+    let call=google.script.run.withSuccessHandler(resolve).withFailureHandler(err=>reject(new Error(err.message||String(err))));
+    arg===undefined?call[fnName]():call[fnName](arg);
+  });
+}
+
+function applyBootstrap(data){
+  S.masterEquity=data.masterEquity||[]; S.masterCommodity=data.masterCommodity||[];
+  S.respEquity=data.respEquity||[]; S.respCommodity=data.respCommodity||[];
+  S.resp2Equity=data.resp2Equity||[]; S.resp2Commodity=data.resp2Commodity||[];
+  S.users=data.users||[]; S.branchName=data.branchName||[]; S.branchError=data.branchError||''; S.missingSheets=data.missingSheets||[];
+}
+
+async function loadAll(){
+  S.ready=false;render();
+  try{ applyBootstrap(await runServer('getBootstrapData')); S.loadError=""; }
+  catch(err){ S.loadError=err.message; }
+  S.ready=true;freshRows();render();startClock();
+}
+
+async function refreshData(){
+  S.syncing=true;render();
+  try{
+    applyBootstrap(await runServer('getBootstrapData'));
+    if(S.user){const f=S.users.find(u=>u.id.toLowerCase()===S.user.id.toLowerCase());if(f)S.user=f;
+      const pk=NAV_ITEMS.find(n=>n.key===S.page)?.perm;
+      if(pk&&!S.user[pk])S.page=firstAllowedPage();
+    }
+    S.loadError="";S.syncing=false;
+    // Reset all data table filters on refresh
+    Object.keys(S.dt).forEach(k=>{S.dt[k].filters={};S.dt[k].filterOpen=null;S.dt[k].page=1;});
+    showToast("Sheet se latest data mil gaya.",false);
+  }catch(err){S.syncing=false;showToast("Refresh nahi ho paya: "+err.message,true);}
+}
+
+/* ============================= SEGMENT HELPERS ============================= */
+function currentSegment(){ return S.page==='entryCommodity'?'commodity':(S.page==='entryEquity'?'equity':null); }
+function masterFor(seg){ return seg==='commodity'?S.masterCommodity:S.masterEquity; }
+function uniqueCodes(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.code).filter(Boolean))).sort(); }
+function matchesForCode(seg,code){ return masterFor(seg).filter(m=>m.code===code); }
+function groupNamesList(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.group).filter(Boolean))).sort(); }
+
+/* ============================= HELPERS ============================= */
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return "&#"+c.charCodeAt(0)+";";});}
+function trashIcon(){return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;}
+function fmtNow(){const d=new Date();const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];const p=n=>String(n).padStart(2,'0');return`${p(d.getDate())}-${M[d.getMonth()]}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
+function fmtDateDisplay(iso){if(!iso)return"";const[y,m,d]=iso.split('-');const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${d}-${M[parseInt(m,10)-1]}-${y}`;}
+function showToast(msg,isErr){S.toast={msg,isErr};render();setTimeout(()=>{S.toast=null;render();},3000);}
+
+/* ============================= AUTO-LOGOUT (NIGHT) ============================= */
+function nextLogoutTs(){
+  const parts=String(AUTO_LOGOUT_TIME).split(':');
+  const h=parseInt(parts[0],10)||0, m=parseInt(parts[1],10)||0;
+  const now=new Date();
+  const t=new Date(now.getFullYear(),now.getMonth(),now.getDate(),h,m,0,0);
+  if(t.getTime()<=now.getTime()) t.setDate(t.getDate()+1); // aaj ka time nikal gaya to kal
+  return t.getTime();
+}
+function forceNightLogout(){
+  S.user=null;S.page=null;S.sidebarOpen=false;S.logoutAt=0;
+  S.loginError="Raat ke auto-logout ke kaaran aap sign out ho gaye. Kripya dobara login karein.";
+  render();
+}
+
+/* ============================= LIVE CLOCK ============================= */
+function startClock(){
+  setInterval(()=>{
+    // Night auto-logout check
+    if(S.user && S.logoutAt && Date.now()>=S.logoutAt){ forceNightLogout(); return; }
+    const el=document.getElementById('liveClock');if(!el)return;
+    const d=new Date();const h=d.getHours(),m=d.getMinutes(),s=d.getSeconds();
+    const ampm=h>=12?'PM':'AM';const h12=h%12||12;const pad=n=>String(n).padStart(2,'0');
+    const months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    el.textContent=`${pad(d.getDate())}-${months[d.getMonth()]}-${d.getFullYear()} · ${pad(h12)}:${pad(m)}:${pad(s)} ${ampm}`;
+  },1000);
+}
+
+/* ============================= DATE PICKER ============================= */
+function initEntryDatePicker(){
+  const el=document.getElementById('entryDate');if(!el)return;
+  if(typeof flatpickr==='undefined')return;
+  document.querySelectorAll('.flatpickr-calendar').forEach(c=>c.remove());
+  const seg=currentSegment();
+  flatpickr(el,{
+    dateFormat:'Y-m-d',altInput:true,altFormat:'d-M-Y',altInputClass:'flatpickr-alt',
+    allowInput:false,disableMobile:true,defaultDate:(seg&&S.entry[seg].date)||null,
+    onChange:function(sel,ds){const s=currentSegment();if(s)S.entry[s].date=ds;},
+    onClose:function(sel,ds){const s=currentSegment();if(s)S.entry[s].date=ds;}
+  });
+}
+
+/* ============================= LOGIN ============================= */
+function renderLogin(){
+  return `
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-top"><div class="login-eyebrow">Commodity & Equity Desk</div><h1>Margin Entry System</h1></div>
+    <div class="login-body">
+      ${S.loginError?`<div class="login-error">${esc(S.loginError)}</div>`:""}
+      <form id="loginForm">
+        <div class="field"><label>User ID</label><input type="text" id="loginId" autocomplete="username" placeholder="Enter your ID" required></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPw" autocomplete="current-password" placeholder="••••••" required></div>
+        <button type="submit" class="btn btn-gold btn-block">Sign In</button>
+      </form>
+      <div class="login-hint">Credentials aur permissions aapki <b>LOGIN PAGE</b> sheet mein hain. Jis column mein <b>YES</b> hoga wahi page milega.</div>
+    </div>
+  </div></div>`;
+}
+function firstAllowedPage(){ const f=NAV_ITEMS.find(n=>S.user&&S.user[n.perm]); return f?f.key:null; }
+function doLogin(id,pw){
+  const u=S.users.find(x=>x.id.toLowerCase()===id.trim().toLowerCase()&&String(x.password)===pw);
+  if(!u){S.loginError="Invalid user ID or password.";render();return;}
+  S.user=u;S.loginError="";S.sidebarOpen=false;S.logoutAt=nextLogoutTs();S.page=firstAllowedPage();render();
+}
+
+/* ============================= NAV ============================= */
+const NAV_ITEMS=[
+  {key:'entryEquity',    label:'Equity Entry',          group:'Entry',       perm:'equityEntry'},
+  {key:'entryCommodity', label:'Commodity Entry',       group:'Entry',       perm:'commodityEntry'},
+  {key:'resp1Equity',    label:'Response 1 · Equity',   group:'Response 1',  perm:'resp1Equity'},
+  {key:'resp1Commodity', label:'Response 1 · Commodity',group:'Response 1',  perm:'resp1Commodity'},
+  {key:'resp2Equity',    label:'Response 2 · Equity',   group:'Response 2',  perm:'resp2Equity'},
+  {key:'resp2Commodity', label:'Response 2 · Commodity',group:'Response 2',  perm:'resp2Commodity'},
+  {key:'masterEquity',   label:'Master · Equity',       group:'Master',      perm:'masterEquity'},
+  {key:'masterCommodity',label:'Master · Commodity',    group:'Master',      perm:'masterCommodity'},
+];
+const PAGE_TITLES={
+  entryEquity:'Equity — Margin Entry', entryCommodity:'Commodity — Margin Entry',
+  resp1Equity:'Response 1', resp1Commodity:'Response 1',
+  resp2Equity:'Response 2', resp2Commodity:'Response 2',
+  masterEquity:'Master Data', masterCommodity:'Master Data',
+};
+function segOfPage(k){ return /Commodity$/.test(k)?'commodity':(/Equity$/.test(k)?'equity':null); }
+
+/* ============================= SHELL ============================= */
+function renderShell(inner){
+  const items=NAV_ITEMS.filter(n=>S.user[n.perm]);
+  const initials=(S.user.name||'U').substring(0,2).toUpperCase();
+  const pageSeg=segOfPage(S.page);
+  // group children under their section headers
+  let childHtml='';
+  if(items.length){
+    let lastGroup=null;
+    items.forEach(n=>{
+      if(n.group!==lastGroup){ childHtml+=`<div class="nav-group-label">${esc(n.group)}</div>`; lastGroup=n.group; }
+      childHtml+=`<div class="nav-child ${S.page===n.key?'active':''}" data-action="nav" data-page="${n.key}">${esc(n.label)}</div>`;
+    });
+  } else {
+    childHtml=`<div class="nav-empty">No pages assigned. Contact admin.</div>`;
+  }
+  return `
+  <div class="shell">
+    <div class="sidebar">
+      <div class="brand"><div class="brand-icon">ME</div><div class="eyebrow">Equity · Commodity</div><h1>Margin System</h1></div>
+      <div class="nav"><div class="nav-section">
+        <div class="nav-parent ${S.sidebarOpen?'open':''}" data-action="toggle-sidebar">
+          <span class="p-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></span>
+          MARGIN
+          <span class="arrow">▶</span>
+        </div>
+        <div class="nav-children ${S.sidebarOpen?'show':''}">${childHtml}</div>
+      </div></div>
+      <div class="sidebar-foot">
+        <div class="logout-btn" data-action="syncnow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>${S.syncing?'Refreshing…':'Refresh from Sheet'}</div>
+        <div class="logout-btn" data-action="logout"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign Out</div>
+      </div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div class="topbar-left"><h2>${PAGE_TITLES[S.page]||'Dashboard'}</h2>${pageSeg?`<span class="seg-badge ${pageSeg}">${pageSeg}</span>`:''}</div>
+        <div class="topbar-right"><div class="topbar-clock" id="liveClock">--:--:--</div><div class="topbar-welcome">Welcome, <b>${esc(S.user.name)}</b></div><div class="avatar">${initials}</div></div>
+      </div>
+      <div class="content">${inner}</div>
+    </div>
+  </div>
+  ${S.toast?`<div class="toast ${S.toast.isErr?'err':''}"><span>${S.toast.isErr?'⚠':'✓'}</span>${esc(S.toast.msg)}</div>`:""}`;
+}
+
+/* ============================= NAV ACTION ============================= */
+async function navigateTo(pageKey){
+  S.colMenuOpen=null;S.page=pageKey;render();
+  try{
+    const fresh=await runServer('getUserPermissions',S.user.id);
+    if(fresh){S.user=Object.assign({},S.user,fresh);
+      const pk=NAV_ITEMS.find(n=>n.key===S.page)?.perm;
+      if(pk&&!S.user[pk]){showToast("Ye page ab aapke liye uplabdh nahi hai.",true);S.page=firstAllowedPage();}
+      render();
+    }
+  }catch(e){}
+}
+
+/* ============================= ENTRY FORM ============================= */
+function addRowA(){const E=S.entry[currentSegment()];E.rowsA.push(blankRowA());render();}
+function addRowB(){const E=S.entry[currentSegment()];E.rowsB.push(blankRowB());render();}
+function delRowA(i){const E=S.entry[currentSegment()];E.rowsA.splice(i,1);render();}
+function delRowB(i){const E=S.entry[currentSegment()];E.rowsB.splice(i,1);render();}
+
+function highlightErrors(seg){
+  const E=S.entry[seg];
+  // Clear all existing red
+  document.querySelectorAll('.cell-error').forEach(el=>el.classList.remove('cell-error'));
+  // Block A: mark empty mandatory fields in rows that have ANY data
+  E.rowsA.forEach((r,i)=>{
+    const any=r.code||r.userId||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
+    if(!any)return;
+    const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
+    if(!r.code){const el=row.querySelector('[data-a="code"]');if(el)el.classList.add('cell-error');}
+    if(!r.userId){const el=row.querySelector('[data-field="userId"]');if(el)el.classList.add('cell-error');}
+    if(!r.software){const el=row.querySelector('[data-field="software"]');if(el)el.classList.add('cell-error');}
+    if(!r.name){const el=row.querySelector('[data-field="name"]');if(el)el.classList.add('cell-error');}
+    if(!r.group){const el=row.querySelector('[data-field="group"]');if(el)el.classList.add('cell-error');}
+    if(!r.branchName){const el=row.querySelector('[data-a="branchName"]');if(el)el.classList.add('cell-error');}
+    if(r.marginRMS===""){const el=row.querySelector('[data-a="marginRMS"]');if(el)el.classList.add('cell-error');}
+    if(r.marginAllocated===""){const el=row.querySelector('[data-a="marginAllocated"]');if(el)el.classList.add('cell-error');}
+  });
+  // Block B: mark empty fields
+  E.rowsB.forEach((r,i)=>{
+    const any=r.group||r.margin!=="";if(!any)return;
+    const rows=document.querySelectorAll('.entry-b tbody tr');const row=rows[i];if(!row)return;
+    if(!r.group){const el=row.querySelector('[data-b="group"]');if(el)el.classList.add('cell-error');}
+    if(r.margin===""){const el=row.querySelector('[data-b="margin"]');if(el)el.classList.add('cell-error');}
+  });
+}
+
+function updateDependentFields(i){
+  const seg=currentSegment();if(!seg)return;const r=S.entry[seg].rowsA[i];
+  const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
+  const uid=row.querySelector('[data-field="userId"]'),sw=row.querySelector('[data-field="software"]'),nm=row.querySelector('[data-field="name"]'),gp=row.querySelector('[data-field="group"]');
+  if(uid){ if(uid.tagName==='INPUT'&&uid!==document.activeElement) uid.value=r.userId; else if(uid.tagName==='DIV') uid.textContent=r.userId; }
+  if(sw) sw.textContent=r.software; if(nm) nm.textContent=r.name; if(gp) gp.textContent=r.group;
+}
+
+function onEntryFieldInput(el){
+  const seg=currentSegment();if(!seg)return;const E=S.entry[seg];
+  const i=parseInt(el.getAttribute('data-i'),10);
+  const aF=el.getAttribute('data-a'),bF=el.getAttribute('data-b');
+  if(aF==='code'){
+    E.rowsA[i].code=el.value;
+    const ms=el.value?matchesForCode(seg,el.value):[];
+    if(ms.length===1){E.rowsA[i].userId=ms[0].userId;E.rowsA[i].software=ms[0].software;E.rowsA[i].name=ms[0].name;E.rowsA[i].group=ms[0].group;}
+    else{E.rowsA[i].userId="";E.rowsA[i].software="";E.rowsA[i].name="";E.rowsA[i].group="";}
+    updateDependentFields(i);return;
+  }
+  if(aF==='userId'){
+    E.rowsA[i].userId=el.value;
+    const match=matchesForCode(seg,E.rowsA[i].code).find(m=>m.userId===el.value);
+    if(match){E.rowsA[i].software=match.software;E.rowsA[i].name=match.name;E.rowsA[i].group=match.group;}
+    else{E.rowsA[i].software="";E.rowsA[i].name="";E.rowsA[i].group="";}
+    updateDependentFields(i);return;
+  }
+  if(aF){E.rowsA[i][aF]=el.value;return;}
+  if(bF){E.rowsB[i][bF]=el.value;return;}
+}
+
+function renderEntry(seg){
+  const E=S.entry[seg];
+  const segLabel=seg==='commodity'?'Commodity':'Equity';
+  const tblA=E.rowsA.map((r,i)=>{
+    const ms=r.code?matchesForCode(seg,r.code):[];
+    let uidCell;
+    if(!r.code) uidCell=`<div class="cell-ro" data-field="userId"></div>`;
+    else if(ms.length<=1) uidCell=`<div class="cell-ro" data-field="userId">${esc(r.userId)}</div>`;
+    else{
+      const uids=Array.from(new Set(ms.map(m=>m.userId)));
+      uidCell=`<input type="text" data-field="userId" list="ul-${i}" data-a="userId" data-i="${i}" value="${esc(r.userId)}" placeholder="Type…" autocomplete="off"><datalist id="ul-${i}">${uids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist>`;
+    }
+    return `<tr data-rowa="${i}">
+      <td class="rownum">${i+1}</td>
+      <td><input type="text" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td>${uidCell}</td>
+      <td><div class="cell-ro" data-field="software">${esc(r.software)}</div></td>
+      <td><div class="cell-ro" data-field="name">${esc(r.name)}</div></td>
+      <td><div class="cell-ro" data-field="group">${esc(r.group)}</div></td>
+      <td><input type="text" list="branchlist" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="${S.branchName.length?'Select branch…':'—'}" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td><input class="num" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
+      <td><input class="num" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
+      <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
+    </tr>`;
+  }).join("");
+
+  const tblB=E.rowsB.map((r,i)=>`<tr>
+      <td class="rownum">${i+1}</td>
+      <td><input type="text" list="grouplist" data-b="group" data-i="${i}" value="${esc(r.group)}" placeholder="Select group…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td><input class="num" type="number" step="any" inputmode="decimal" data-b="margin" data-i="${i}" value="${esc(r.margin)}" placeholder=""></td>
+      <td style="text-align:center;"><button class="trash-btn" data-action="del-b" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
+    </tr>`).join("");
+
+  const eCols=[
+    {k:'num',label:'#',def:24,noResize:true},{k:'code',label:'Code',def:80},{k:'userId',label:'User ID',def:90},
+    {k:'software',label:'Software',def:70},{k:'name',label:'Name',def:250},{k:'group',label:'Group',def:110},
+    {k:'branchName',label:'Branch Name',def:110},{k:'marginRMS',label:'Margin RMS',def:85},{k:'marginAllocated',label:'Margin Alloc.',def:85},{k:'del',label:'',def:28,noResize:true}
+  ];
+  const eHdr=eCols.map(c=>{
+    const w=S.entryWidths[c.k]||c.def;
+    const handle=c.noResize?'':`<div class="eresize" data-ecol="${c.k}"></div>`;
+    return `<th class="blk-a" style="width:${w}px;min-width:${w}px;max-width:${w}px;">${c.label}${handle}</th>`;
+  }).join('');
+
+  const mCount=masterFor(seg).length;
+  return `
+    <div class="entry-toolbar">
+      <div class="date-field"><label>Date <span class="req-star">*</span></label><input type="text" id="entryDate" placeholder="DD-MMM-YYYY" value="${esc(E.date)}" autocomplete="off"></div>
+      <span class="seg-badge ${seg}">${segLabel}</span>
+      <span style="font-size:10px;color:var(--muted);">Master: ${mCount} rows${mCount?'':' — check MASTER '+segLabel.toUpperCase()+' tab'}</span>
+      <div style="margin-left:auto;font-size:10px;color:var(--muted);">Saves to RESPONSES ${segLabel.toUpperCase()} & RESPONSES 2 ${segLabel.toUpperCase()}</div>
+    </div>
+    <div class="entry-panels">
+      <div class="entry-panel entry-panel-main">
+        <div class="panel-head">${segLabel} Margin Entry <span class="panel-count">${E.rowsA.length} rows</span></div>
+        <div class="entry-scroll"><table class="entry" style="table-layout:fixed;"><thead><tr>${eHdr}</tr></thead><tbody>${tblA}</tbody></table></div>
+        <div class="panel-foot">
+          <button class="btn btn-ghost" data-action="add-a">+ Add Row</button>
+          <button class="btn btn-gold" data-action="submit-entry">Save All Entries</button>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted);">Saving as: <b style="color:var(--ink);">${esc(S.user.name)}</b></span>
+        </div>
+      </div>
+      <div class="entry-panel entry-panel-side">
+        <div class="panel-head">Group Margin <span class="panel-count">${E.rowsB.length} rows</span></div>
+        <div class="entry-scroll"><table class="entry entry-b"><thead><tr>
+          <th class="blk-b" style="width:28px;">#</th><th class="blk-b">Group Name</th><th class="blk-b">Group Margin</th><th class="blk-b" style="width:32px;"></th>
+        </tr></thead><tbody>${tblB}</tbody></table></div>
+        <div class="panel-foot"><button class="btn btn-ghost" data-action="add-b">+ Add Row</button></div>
+      </div>
+    </div>
+    <datalist id="codelist">${uniqueCodes(seg).map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
+    <datalist id="grouplist">${groupNamesList(seg).map(g=>`<option value="${esc(g)}">`).join("")}</datalist>
+    <datalist id="branchlist">${S.branchName.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>`;
+}
+
+async function submitEntry(){
+  const seg=currentSegment();if(!seg)return;const E=S.entry[seg];
+  const dateVal=document.getElementById('entryDate')?.value||E.date;E.date=dateVal;
+  const validA=[],validB=[];let errA=false,errB=false;
+  E.rowsA.forEach(r=>{
+    const any=r.code||r.userId||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
+    if(!any)return;
+    const ok=r.code&&r.userId!==""&&r.software&&r.name&&r.group&&r.branchName&&r.marginRMS!==""&&r.marginAllocated!=="";
+    if(!ok){errA=true;return;}validA.push(r);
+  });
+  E.rowsB.forEach(r=>{
+    const any=r.group||r.margin!=="";if(!any)return;
+    if(!r.group||r.margin===""){errB=true;return;}validB.push(r);
+  });
+  if(!dateVal&&(validA.length||validB.length)){showToast("Please select a date before saving.",true);return;}
+  if(errA){showToast("Koi row adhoori hai — ek row ke saare 8 column (Code se Margin Alloc.) bharein, tabhi save hoga.",true);highlightErrors(seg);return;}
+  if(errB){showToast("Group Margin ki koi row adhoori hai — Group Name aur Group Margin dono bharein.",true);highlightErrors(seg);return;}
+  if(!validA.length&&!validB.length){showToast("Nothing to save yet.",true);return;}
+
+  const ts=fmtNow();const disp=fmtDateDisplay(dateVal);const loginName=S.user.name||S.user.id||'';
+  const newA=validA.map(r=>({timestamp:ts,date:disp,code:r.code,userId:r.userId,software:r.software,name:r.name,group:r.group,marginRMS:r.marginRMS,marginAllocated:r.marginAllocated,branchName:r.branchName,loginName:loginName}));
+  const newB=validB.map(r=>({timestamp:ts,date:disp,group:r.group,margin:r.margin,loginName:loginName}));
+
+  showToast("Saving to Google Sheet…",false);
+  try{
+    const result=await runServer('saveEntries',{segment:seg,responses1:newA,responses2:newB});
+    if(result.status!=='ok'){showToast("Save failed: "+(result.message||'unknown error'),true);return;}
+    if(seg==='equity'){S.respEquity.push(...newA);S.resp2Equity.push(...newB);}
+    else{S.respCommodity.push(...newA);S.resp2Commodity.push(...newB);}
+    S.entry[seg]=freshSeg();
+    showToast(`Saved ${result.savedA} entry row(s) and ${result.savedB} group row(s) to ${seg==='equity'?'Equity':'Commodity'} sheets.`,false);
+  }catch(err){showToast("Save failed: "+err.message,true);}
+}
+
+/* ============================= DATA TABLES ============================= */
+const RESP1_COLS=[
+  {key:'timestamp',label:'Timestamp',width:170},{key:'date',label:'Date',width:115},{key:'code',label:'Code',pill:true,width:110},
+  {key:'userId',label:'User ID',width:110},{key:'software',label:'Software',width:100},{key:'name',label:'Name',width:300},
+  {key:'group',label:'Group Name',width:150},{key:'marginRMS',label:'Margin as per RMS',width:150},{key:'marginAllocated',label:'Margin Allocated on ID',width:170},{key:'loginName',label:'Login Name',width:140}
+];
+const RESP2_COLS=[
+  {key:'timestamp',label:'Timestamp',width:170},{key:'date',label:'Date',width:115},{key:'group',label:'Group Name',width:220},{key:'margin',label:'Group Margin',width:150},{key:'loginName',label:'Login Name',width:140}
+];
+const MASTER_COLS=[
+  {key:'code',label:'Code',pill:true,width:120},{key:'userId',label:'User ID',width:130},{key:'software',label:'Software',width:110},{key:'name',label:'Name',width:340},{key:'group',label:'Group Name',width:180}
+];
+const TABLE_DEFS={
+  resp1Equity:{cols:RESP1_COLS,data:()=>S.respEquity},
+  resp1Commodity:{cols:RESP1_COLS,data:()=>S.respCommodity},
+  resp2Equity:{cols:RESP2_COLS,data:()=>S.resp2Equity},
+  resp2Commodity:{cols:RESP2_COLS,data:()=>S.resp2Commodity},
+  masterEquity:{cols:MASTER_COLS,data:()=>S.masterEquity},
+  masterCommodity:{cols:MASTER_COLS,data:()=>S.masterCommodity},
+};
+
+function renderDataTable(tableKey){
+  const def=TABLE_DEFS[tableKey];const st=S.dt[tableKey];let rows=def.data().slice();
+  Object.entries(st.filters).forEach(([k,v])=>{if(!v)return;rows=rows.filter(r=>String(r[k]??"").toLowerCase().includes(v.toLowerCase()));});
+  if(st.sort){rows.sort((a,b)=>{let x=a[st.sort],y=b[st.sort];const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===String(x).trim()&&String(ny)===String(y).trim()){x=nx;y=ny;}if(x<y)return-1*st.dir;if(x>y)return 1*st.dir;return 0;});}
+  const total=rows.length;const ps=st.pageSize;const tp=Math.max(1,Math.ceil(total/ps));
+  if(st.page>tp)st.page=tp;if(st.page<1)st.page=1;
+  const si=(st.page-1)*ps;const pageRows=rows.slice(si,si+ps);
+  const visCols=def.cols.filter(c=>!st.hidden.has(c.key));
+  const hdr=visCols.map(c=>{
+    const w=st.widths[c.key]||c.width||150;const si2=st.sort===c.key?(st.dir===1?'▲':'▼'):'';const fo=st.filterOpen===c.key;
+    return `<th style="width:${w}px;min-width:${w}px;max-width:${w}px;" data-col="${c.key}">
+      <div class="th-inner"><div class="th-row">
+        <span class="th-label" data-action="sort" data-table="${tableKey}" data-col="${c.key}">${esc(c.label)}</span>
+        <span class="sort-ic">${si2}</span>
+        <span class="search-ic" data-action="togglesearch" data-table="${tableKey}" data-col="${c.key}">⌕</span>
+      </div>
+      ${fo?`<div class="th-filter"><input type="text" placeholder="Filter…" data-action="filter" data-table="${tableKey}" data-col="${c.key}" value="${esc(st.filters[c.key]||'')}"></div>`:""}
+      <div class="resize-handle" data-action="resize" data-table="${tableKey}" data-col="${c.key}"></div>
+      </div></th>`;
+  }).join("");
+  const bod=pageRows.length?pageRows.map(r=>`<tr>${visCols.map(c=>{const v=r[c.key]==null?"":r[c.key];return`<td>${c.pill&&v?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
+  const rf=total===0?0:si+1;const rt=Math.min(si+ps,total);
+  return `
+    <div class="dt-toolbar">
+      <div class="count">${total} of ${def.data().length} rows</div>
+      <button class="btn btn-ghost" data-action="syncnow" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
+      <div class="dt-colmenu-wrap">
+        <button class="btn btn-ghost" data-action="togglecolmenu" data-table="${tableKey}" style="padding:7px 14px;">Columns ▾</button>
+        ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / hide columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
+      </div>
+    </div>
+    <div class="dt-table-wrap">
+      <div class="dt-scroll"><table class="dt"><thead><tr>${hdr}</tr></thead><tbody>${bod}</tbody></table></div>
+      <div class="dt-pagination">
+        <div class="pp">Rows per page: <select data-action="pagesize" data-table="${tableKey}">${PAGE_SIZE_OPTIONS.map(n=>`<option value="${n}" ${st.pageSize===n?'selected':''}>${n}</option>`).join("")}</select></div>
+        <div>${total===0?'0':`${rf}–${rt}`} of ${total}</div>
+        <div class="nav">
+          <button data-action="pagefirst" data-table="${tableKey}" ${st.page<=1?'disabled':''}>«</button>
+          <button data-action="pageprev" data-table="${tableKey}" ${st.page<=1?'disabled':''}>‹</button>
+          <span class="pageinfo">${st.page} / ${tp}</span>
+          <button data-action="pagenext" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>›</button>
+          <button data-action="pagelast" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>»</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ============================= EVENTS ============================= */
+let resizeCtx=null,rowResizeCtx=null,eResizeCtx=null,filterTimer=null;
+document.addEventListener('submit',e=>{if(e.target&&e.target.id==='loginForm'){e.preventDefault();doLogin(document.getElementById('loginId').value,document.getElementById('loginPw').value);}});
+
+document.addEventListener('focusout',e=>{
+  const el=e.target;
+  if(el.hasAttribute('data-a')){const f=el.getAttribute('data-a');if(f==='code'||f==='userId'){setTimeout(()=>render(),100);}}
+});
+
+document.addEventListener('input',e=>{
+  const el=e.target;
+  // Remove red highlight when user types
+  if(el.classList.contains('cell-error')&&el.value) el.classList.remove('cell-error');
+  if(el.hasAttribute('data-a')||el.hasAttribute('data-b')){onEntryFieldInput(el);return;}
+  if(el.getAttribute('data-action')==='filter'){
+    const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');
+    S.dt[t].filters[c]=el.value;
+    clearTimeout(filterTimer);
+    filterTimer=setTimeout(()=>{S.dt[t].page=1;const pos=el.selectionStart;render();
+      const ag=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);
+      if(ag){ag.focus();ag.setSelectionRange(pos,pos);}
+    },350);
+  }
+});
+
+document.addEventListener('change',e=>{
+  const el=e.target;
+  if(el.tagName==='SELECT'&&(el.hasAttribute('data-a')||el.hasAttribute('data-b'))){onEntryFieldInput(el);return;}
+  if(el.getAttribute('data-action')==='pagesize'){const t=el.getAttribute('data-table');S.dt[t].pageSize=parseInt(el.value,10);S.dt[t].page=1;render();}
+});
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.getAttribute('data-action');
+  if(a==='toggle-sidebar'){S.sidebarOpen=!S.sidebarOpen;render();return;}
+  if(a==='nav'){navigateTo(el.getAttribute('data-page'));return;}
+  if(a==='logout'){S.user=null;S.page=null;S.sidebarOpen=false;S.logoutAt=0;render();return;}
+  if(a==='syncnow'){refreshData();return;}
+  if(a==='add-a'){addRowA();return;}
+  if(a==='add-b'){addRowB();return;}
+  if(a==='del-a'){delRowA(parseInt(el.getAttribute('data-i'),10));return;}
+  if(a==='del-b'){delRowB(parseInt(el.getAttribute('data-i'),10));return;}
+  if(a==='submit-entry'){submitEntry();return;}
+  if(a==='sort'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.sort===c)st.dir*=-1;else{st.sort=c;st.dir=1;}st.page=1;render();return;}
+  if(a==='pagefirst'){S.dt[el.getAttribute('data-table')].page=1;render();return;}
+  if(a==='pageprev'){const st=S.dt[el.getAttribute('data-table')];st.page=Math.max(1,st.page-1);render();return;}
+  if(a==='pagenext'){S.dt[el.getAttribute('data-table')].page++;render();return;}
+  if(a==='pagelast'){S.dt[el.getAttribute('data-table')].page=999999;render();return;}
+  if(a==='togglesearch'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];st.filterOpen=st.filterOpen===c?null:c;render();if(st.filterOpen){const inp=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);if(inp)inp.focus();}return;}
+  if(a==='togglecolmenu'){const t=el.getAttribute('data-table');S.colMenuOpen=S.colMenuOpen===t?null:t;render();return;}
+  if(a==='togglecol'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.hidden.has(c))st.hidden.delete(c);else st.hidden.add(c);render();S.colMenuOpen=t;return;}
+});
+document.addEventListener('click',e=>{if(!e.target.closest('.dt-colmenu-wrap')&&S.colMenuOpen){S.colMenuOpen=null;render();}});
+
+document.addEventListener('mousedown',e=>{
+  const erEl=e.target.closest('.eresize');
+  if(erEl){const th=erEl.closest('th');const col=erEl.getAttribute('data-ecol');eResizeCtx={col,th,startX:e.clientX,startW:th.getBoundingClientRect().width};e.preventDefault();return;}
+  const rrEl=e.target.closest('.row-resize');
+  if(rrEl){const tr=rrEl.closest('tr');if(tr){rowResizeCtx={tr,startY:e.clientY,startH:tr.getBoundingClientRect().height};e.preventDefault();return;}}
+  const el=e.target.closest('[data-action="resize"]');if(!el)return;
+  const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const th=el.closest('th');
+  el.classList.add('active');resizeCtx={t,c,el,startX:e.clientX,startW:th.getBoundingClientRect().width};e.preventDefault();
+});
+document.addEventListener('mousemove',e=>{
+  if(eResizeCtx){const nw=Math.max(30,Math.round(eResizeCtx.startW+(e.clientX-eResizeCtx.startX)));eResizeCtx.th.style.width=nw+'px';eResizeCtx.th.style.minWidth=nw+'px';eResizeCtx.th.style.maxWidth=nw+'px';return;}
+  if(rowResizeCtx){const nh=Math.max(28,Math.round(rowResizeCtx.startH+(e.clientY-rowResizeCtx.startY)));rowResizeCtx.tr.style.height=nh+'px';return;}
+  if(!resizeCtx)return;const nw=Math.max(60,Math.round(resizeCtx.startW+(e.clientX-resizeCtx.startX)));
+  const th=document.querySelector(`table.dt th[data-col="${resizeCtx.c}"]`);
+  if(th){th.style.width=nw+'px';th.style.minWidth=nw+'px';th.style.maxWidth=nw+'px';}
+});
+document.addEventListener('mouseup',e=>{
+  if(eResizeCtx){const nw=Math.max(30,Math.round(eResizeCtx.startW+(e.clientX-eResizeCtx.startX)));S.entryWidths[eResizeCtx.col]=nw;saveEntryWidths();eResizeCtx=null;return;}
+  if(rowResizeCtx){rowResizeCtx=null;return;}
+  if(!resizeCtx)return;
+  S.dt[resizeCtx.t].widths[resizeCtx.c]=Math.max(60,Math.round(resizeCtx.startW+(e.clientX-resizeCtx.startX)));
+  resizeCtx.el.classList.remove('active');resizeCtx=null;render();
+});
+
+/* ============================= RENDER ============================= */
+function render(){
+  const app=document.getElementById('app');
+  if(!S.ready){app.innerHTML=`<div class="loading-screen"><div class="spinner"></div><div>Loading margin data…</div></div>`;return;}
+  if(S.loadError){app.innerHTML=`<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="login-eyebrow">Setup</div><h1>Sheet load failed</h1></div><div class="login-body"><div class="login-error">${esc(S.loadError)}</div><div class="login-hint">1) Open via the Apps Script <b>/exec</b> URL. 2) Required tabs: LOGIN PAGE, MASTER EQUITY, MASTER COMODDITY, RESPONSES EQUITY, RESPONSES COMODDITY, RESPONSES 2 EQUITY, RESPONSES 2 COMODDITY. 3) Deploy access = "Anyone".</div><button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="syncnow">Retry</button></div></div></div>`;return;}
+  if(!S.user){app.innerHTML=renderLogin();return;}
+  let inner="";
+  if(S.page==='entryEquity')inner=renderEntry('equity');
+  else if(S.page==='entryCommodity')inner=renderEntry('commodity');
+  else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
+  else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
+  app.innerHTML=renderShell(inner);
+  if(S.page==='entryEquity'||S.page==='entryCommodity')initEntryDatePicker();
+}
+
+loadAll();
+</script>
+</body>
+</html>
