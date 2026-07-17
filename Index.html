@@ -566,10 +566,17 @@ async function submitEntry(){
     const any=r.group||r.margin!=="";if(!any)return;
     if(!r.group||r.margin===""){errB=true;return;}validB.push(r);
   });
-  if(!dateVal&&(validA.length||validB.length)){highlightErrors(seg);const dp=document.querySelector('.flatpickr-alt')||document.getElementById('entryDate');if(dp){dp.classList.add('cell-error');dp.style.borderColor='#C4291C';dp.style.background='#FEF2F2';}return;}
-  if(errA){highlightErrors(seg);return;}
-  if(errB){highlightErrors(seg);return;}
-  if(!validA.length&&!validB.length){showToast("Nothing to save yet.",true);return;}
+
+  // VALIDATION FAILED — highlight RED, NO render, NO toast
+  if(!dateVal&&(validA.length||validB.length||errA||errB)){
+    highlightErrors(seg);
+    return;
+  }
+  if(errA||errB){
+    highlightErrors(seg);
+    return;
+  }
+  if(!validA.length&&!validB.length){return;}
 
   const ts=fmtNow();const disp=fmtDateDisplay(dateVal);const loginName=S.user.name||S.user.id||'';
   const newA=validA.map(r=>({timestamp:ts,date:disp,code:r.code,userId:r.userId,software:r.software,name:r.name,group:r.group,marginRMS:r.marginRMS,marginAllocated:r.marginAllocated,branchName:r.branchName,loginName:loginName}));
