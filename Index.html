@@ -133,6 +133,7 @@ table.entry input{width:100%;padding:7px 9px;border:1.5px solid var(--line);bord
 table.entry input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-tint);}
 table.entry input.cell-error,table.entry .cell-ro.cell-error{border-color:var(--danger);background:#FEF2F2;}
 table.entry input.cell-error:focus{border-color:var(--danger);box-shadow:0 0 0 2px var(--danger-tint);}
+.date-field input.cell-error,.flatpickr-alt.cell-error{border-color:var(--danger) !important;background:#FEF2F2 !important;}
 table.entry input.num{font-family:'JetBrains Mono',monospace;text-align:right;}
 .cell-ro{padding:6px 8px;font-size:11.5px;color:#5A564F;background:#F5F4F0;border:1px solid #ECEAE4;border-radius:6px;min-height:30px;line-height:1.35;word-break:break-word;overflow-wrap:anywhere;white-space:normal;}
 .trash-btn{border:none;background:transparent;color:var(--danger);cursor:pointer;padding:6px;border-radius:6px;line-height:1;display:inline-flex;align-items:center;justify-content:center;opacity:.6;transition:all .15s;}
@@ -199,7 +200,7 @@ let S = {
   entry:{ equity:freshSeg(), commodity:freshSeg() },
   toast:null, loginError:"",
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
-  colMenuOpen:null, entryWidths:{}, logoutAt:0,
+  colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
 function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
@@ -410,6 +411,8 @@ function highlightErrors(seg){
   const E=S.entry[seg];
   // Clear all existing red
   document.querySelectorAll('.cell-error').forEach(el=>el.classList.remove('cell-error'));
+  // Date check
+  if(!E.date){const dp=document.querySelector('.flatpickr-alt')||document.getElementById('entryDate');if(dp)dp.classList.add('cell-error');}
   // Block A: mark empty mandatory fields in rows that have ANY data
   E.rowsA.forEach((r,i)=>{
     const any=r.code||r.userId||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
@@ -521,7 +524,7 @@ function renderEntry(seg){
         <div class="entry-scroll"><table class="entry" style="table-layout:fixed;"><thead><tr>${eHdr}</tr></thead><tbody>${tblA}</tbody></table></div>
         <div class="panel-foot">
           <button class="btn btn-ghost" data-action="add-a">+ Add Row</button>
-          <button class="btn btn-gold" data-action="submit-entry">Save All Entries</button>
+          <button class="btn btn-gold" data-action="submit-entry" ${S.saving?'disabled':''}>${S.saving?'<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Saving…':'Save All Entries'}</button>
           <span style="margin-left:auto;font-size:11px;color:var(--muted);">Saving as: <b style="color:var(--ink);">${esc(S.user.name)}</b></span>
         </div>
       </div>
@@ -552,7 +555,7 @@ async function submitEntry(){
     const any=r.group||r.margin!=="";if(!any)return;
     if(!r.group||r.margin===""){errB=true;return;}validB.push(r);
   });
-  if(!dateVal&&(validA.length||validB.length)){showToast("Please select a date before saving.",true);return;}
+  if(!dateVal&&(validA.length||validB.length)){showToast("Please select a date before saving.",true);const dp=document.querySelector('.flatpickr-alt')||document.getElementById('entryDate');if(dp)dp.classList.add('cell-error');return;}
   if(errA){showToast("Koi row adhoori hai — ek row ke saare 8 column (Code se Margin Alloc.) bharein, tabhi save hoga.",true);highlightErrors(seg);return;}
   if(errB){showToast("Group Margin ki koi row adhoori hai — Group Name aur Group Margin dono bharein.",true);highlightErrors(seg);return;}
   if(!validA.length&&!validB.length){showToast("Nothing to save yet.",true);return;}
@@ -561,15 +564,17 @@ async function submitEntry(){
   const newA=validA.map(r=>({timestamp:ts,date:disp,code:r.code,userId:r.userId,software:r.software,name:r.name,group:r.group,marginRMS:r.marginRMS,marginAllocated:r.marginAllocated,branchName:r.branchName,loginName:loginName}));
   const newB=validB.map(r=>({timestamp:ts,date:disp,group:r.group,margin:r.margin,loginName:loginName}));
 
-  showToast("Saving to Google Sheet…",false);
+  // Show loading spinner
+  S.saving=true;render();
   try{
     const result=await runServer('saveEntries',{segment:seg,responses1:newA,responses2:newB});
+    S.saving=false;
     if(result.status!=='ok'){showToast("Save failed: "+(result.message||'unknown error'),true);return;}
     if(seg==='equity'){S.respEquity.push(...newA);S.resp2Equity.push(...newB);}
     else{S.respCommodity.push(...newA);S.resp2Commodity.push(...newB);}
     S.entry[seg]=freshSeg();
     showToast(`Saved ${result.savedA} entry row(s) and ${result.savedB} group row(s) to ${seg==='equity'?'Equity':'Commodity'} sheets.`,false);
-  }catch(err){showToast("Save failed: "+err.message,true);}
+  }catch(err){S.saving=false;showToast("Save failed: "+err.message,true);}
 }
 
 /* ============================= DATA TABLES ============================= */
