@@ -258,6 +258,20 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){retur
 function trashIcon(){return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;}
 function fmtNow(){const d=new Date();const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];const p=n=>String(n).padStart(2,'0');return`${p(d.getDate())}-${M[d.getMonth()]}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
 function fmtDateDisplay(iso){if(!iso)return"";const[y,m,d]=iso.split('-');const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${d}-${M[parseInt(m,10)-1]}-${y}`;}
+// Parse "24-Jun-2026" or "24-Jun-2026 12:25:32" into a comparable timestamp number. Returns null if not parseable.
+function parseDT(v){
+  if(v==null)return null;
+  const s=String(v).trim();if(!s)return null;
+  const M={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  const m=s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{4})(?:[\sT]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m){
+    const day=+m[1],mon=M[m[2].slice(0,3).toLowerCase()],yr=+m[3];
+    if(mon===undefined)return null;
+    const hh=+(m[4]||0),mm=+(m[5]||0),ss=+(m[6]||0);
+    return new Date(yr,mon,day,hh,mm,ss).getTime();
+  }
+  const t=Date.parse(s);return isNaN(t)?null:t;
+}
 function showToast(msg,isErr,noRender){
   S.toast={msg,isErr};
   if(!noRender){render();}
@@ -632,7 +646,22 @@ const TABLE_DEFS={
 function renderDataTable(tableKey){
   const def=TABLE_DEFS[tableKey];const st=S.dt[tableKey];let rows=def.data().slice();
   Object.entries(st.filters).forEach(([k,v])=>{if(!v)return;rows=rows.filter(r=>String(r[k]??"").toLowerCase().includes(v.toLowerCase()));});
-  if(st.sort){rows.sort((a,b)=>{let x=a[st.sort],y=b[st.sort];const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===String(x).trim()&&String(ny)===String(y).trim()){x=nx;y=ny;}if(x<y)return-1*st.dir;if(x>y)return 1*st.dir;return 0;});}
+  if(st.sort){
+    const isDateCol=(st.sort==='timestamp'||st.sort==='date');
+    rows.sort((a,b)=>{
+      let x=a[st.sort],y=b[st.sort];
+      if(isDateCol){
+        // Sort by real date/time, not text
+        const dx=parseDT(x),dy=parseDT(y);
+        const ex=(dx===null),ey=(dy===null);
+        if(ex&&ey)return 0; if(ex)return 1; if(ey)return -1; // blanks last
+        return (dx-dy)*st.dir;
+      }
+      const nx=parseFloat(x),ny=parseFloat(y);
+      if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===String(x).trim()&&String(ny)===String(y).trim()){x=nx;y=ny;}
+      if(x<y)return-1*st.dir;if(x>y)return 1*st.dir;return 0;
+    });
+  }
   const total=rows.length;const ps=st.pageSize;const tp=Math.max(1,Math.ceil(total/ps));
   if(st.page>tp)st.page=tp;if(st.page<1)st.page=1;
   const si=(st.page-1)*ps;const pageRows=rows.slice(si,si+ps);
