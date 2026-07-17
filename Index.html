@@ -258,7 +258,16 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){retur
 function trashIcon(){return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;}
 function fmtNow(){const d=new Date();const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];const p=n=>String(n).padStart(2,'0');return`${p(d.getDate())}-${M[d.getMonth()]}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
 function fmtDateDisplay(iso){if(!iso)return"";const[y,m,d]=iso.split('-');const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${d}-${M[parseInt(m,10)-1]}-${y}`;}
-function showToast(msg,isErr){S.toast={msg,isErr};render();setTimeout(()=>{S.toast=null;render();},3000);}
+function showToast(msg,isErr,noRender){
+  S.toast={msg,isErr};
+  if(!noRender){render();}
+  else{
+    // Insert toast without re-rendering (so red highlights stay)
+    let t=document.querySelector('.toast');if(t)t.remove();
+    const d=document.createElement('div');d.className='toast'+(isErr?' err':'');d.innerHTML=`<span>${isErr?'⚠':'✓'}</span>${esc(msg)}`;document.body.appendChild(d);
+  }
+  setTimeout(()=>{S.toast=null;const t=document.querySelector('.toast');if(t)t.remove();},3000);
+}
 
 /* ============================= AUTO-LOGOUT (NIGHT) ============================= */
 function nextLogoutTs(){
@@ -555,9 +564,9 @@ async function submitEntry(){
     const any=r.group||r.margin!=="";if(!any)return;
     if(!r.group||r.margin===""){errB=true;return;}validB.push(r);
   });
-  if(!dateVal&&(validA.length||validB.length)){showToast("Please select a date before saving.",true);const dp=document.querySelector('.flatpickr-alt')||document.getElementById('entryDate');if(dp)dp.classList.add('cell-error');return;}
-  if(errA){showToast("Koi row adhoori hai — ek row ke saare 8 column (Code se Margin Alloc.) bharein, tabhi save hoga.",true);highlightErrors(seg);return;}
-  if(errB){showToast("Group Margin ki koi row adhoori hai — Group Name aur Group Margin dono bharein.",true);highlightErrors(seg);return;}
+  if(!dateVal&&(validA.length||validB.length)){highlightErrors(seg);showToast("Please select a date before saving.",true,true);const dp=document.querySelector('.flatpickr-alt')||document.getElementById('entryDate');if(dp)dp.classList.add('cell-error');return;}
+  if(errA){highlightErrors(seg);showToast("Koi row adhoori hai — jo RED hai wo bharein.",true,true);return;}
+  if(errB){highlightErrors(seg);showToast("Group Name aur Group Margin dono bharein.",true,true);return;}
   if(!validA.length&&!validB.length){showToast("Nothing to save yet.",true);return;}
 
   const ts=fmtNow();const disp=fmtDateDisplay(dateVal);const loginName=S.user.name||S.user.id||'';
