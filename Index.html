@@ -190,7 +190,7 @@ const AUTO_LOGOUT_TIME = "23:59";
 function dtState(){return{sort:null,dir:1,hidden:new Set(),filters:{},filterOpen:null,widths:{},page:1,pageSize:50};}
 function blankRowA(){return{code:"",userId:"",software:"",name:"",group:"",branchName:"",marginRMS:"",marginAllocated:""};}
 function blankRowB(){return{group:"",margin:""};}
-function freshSeg(){return{date:"",rowsA:Array.from({length:MIN_ROWS},blankRowA),rowsB:Array.from({length:10},blankRowB)};}
+function freshSeg(){return{date:"",rowsA:Array.from({length:MIN_ROWS},blankRowA),rowsB:Array.from({length:10},blankRowB),showErrors:false};}
 
 let S = {
   ready:false, loadError:"", user:null, page:null, syncing:false, sidebarOpen:false,
@@ -306,9 +306,14 @@ function initEntryDatePicker(){
   flatpickr(el,{
     dateFormat:'Y-m-d',altInput:true,altFormat:'d-M-Y',altInputClass:'flatpickr-alt',
     allowInput:false,disableMobile:true,defaultDate:(seg&&S.entry[seg].date)||null,
-    onChange:function(sel,ds){const s=currentSegment();if(s)S.entry[s].date=ds;},
+    onChange:function(sel,ds){const s=currentSegment();if(s){S.entry[s].date=ds;const a=document.querySelector('.flatpickr-alt');if(a&&ds){a.classList.remove('cell-error');a.style.borderColor='';a.style.background='';}}},
     onClose:function(sel,ds){const s=currentSegment();if(s)S.entry[s].date=ds;}
   });
+  // Show RED on date if submit attempted and date empty
+  if(seg&&S.entry[seg].showErrors&&!S.entry[seg].date){
+    const a=document.querySelector('.flatpickr-alt');
+    if(a){a.classList.add('cell-error');a.style.borderColor='#C4291C';a.style.background='#FEF2F2';}
+  }
 }
 
 /* ============================= LOGIN ============================= */
@@ -482,33 +487,41 @@ function renderEntry(seg){
   const segLabel=seg==='commodity'?'Commodity':'Equity';
   const tblA=E.rowsA.map((r,i)=>{
     const ms=r.code?matchesForCode(seg,r.code):[];
+    // Error highlight logic — driven by state so render() never wipes it
+    const anyA=r.code||r.userId!==""||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
+    const showE=E.showErrors&&anyA;
+    const ec=cond=>(showE&&cond)?' cell-error':'';
     let uidCell;
-    if(!r.code) uidCell=`<div class="cell-ro" data-field="userId"></div>`;
-    else if(ms.length<=1) uidCell=`<div class="cell-ro" data-field="userId">${esc(r.userId)}</div>`;
+    if(!r.code) uidCell=`<div class="cell-ro${ec(true)}" data-field="userId"></div>`;
+    else if(ms.length<=1) uidCell=`<div class="cell-ro${ec(!r.userId)}" data-field="userId">${esc(r.userId)}</div>`;
     else{
       const uids=Array.from(new Set(ms.map(m=>m.userId)));
-      uidCell=`<input type="text" data-field="userId" list="ul-${i}" data-a="userId" data-i="${i}" value="${esc(r.userId)}" placeholder="Type…" autocomplete="off"><datalist id="ul-${i}">${uids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist>`;
+      uidCell=`<input type="text" class="${(showE&&!r.userId)?'cell-error':''}" data-field="userId" list="ul-${i}" data-a="userId" data-i="${i}" value="${esc(r.userId)}" placeholder="Type…" autocomplete="off"><datalist id="ul-${i}">${uids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist>`;
     }
     return `<tr data-rowa="${i}">
       <td class="rownum">${i+1}</td>
-      <td><input type="text" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td><input type="text" class="${(showE&&!r.code)?'cell-error':''}" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
       <td>${uidCell}</td>
-      <td><div class="cell-ro" data-field="software">${esc(r.software)}</div></td>
-      <td><div class="cell-ro" data-field="name">${esc(r.name)}</div></td>
-      <td><div class="cell-ro" data-field="group">${esc(r.group)}</div></td>
-      <td><input type="text" list="branchlist" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="${S.branchName.length?'Select branch…':'—'}" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
-      <td><input class="num" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
-      <td><input class="num" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
+      <td><div class="cell-ro${ec(!r.software)}" data-field="software">${esc(r.software)}</div></td>
+      <td><div class="cell-ro${ec(!r.name)}" data-field="name">${esc(r.name)}</div></td>
+      <td><div class="cell-ro${ec(!r.group)}" data-field="group">${esc(r.group)}</div></td>
+      <td><input type="text" class="${(showE&&!r.branchName)?'cell-error':''}" list="branchlist" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="${S.branchName.length?'Select branch…':'—'}" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
+      <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
     </tr>`;
   }).join("");
 
-  const tblB=E.rowsB.map((r,i)=>`<tr>
+  const tblB=E.rowsB.map((r,i)=>{
+    const anyB=r.group||r.margin!=="";
+    const showEB=E.showErrors&&anyB;
+    return `<tr>
       <td class="rownum">${i+1}</td>
-      <td><input type="text" list="grouplist" data-b="group" data-i="${i}" value="${esc(r.group)}" placeholder="Select group…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
-      <td><input class="num" type="number" step="any" inputmode="decimal" data-b="margin" data-i="${i}" value="${esc(r.margin)}" placeholder=""></td>
+      <td><input type="text" class="${(showEB&&!r.group)?'cell-error':''}" list="grouplist" data-b="group" data-i="${i}" value="${esc(r.group)}" placeholder="Select group…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td><input class="num${(showEB&&r.margin==="")?' cell-error':''}" type="number" step="any" inputmode="decimal" data-b="margin" data-i="${i}" value="${esc(r.margin)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-b" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   const eCols=[
     {k:'num',label:'#',def:24,noResize:true},{k:'code',label:'Code',def:80},{k:'userId',label:'User ID',def:90},
@@ -567,17 +580,17 @@ async function submitEntry(){
     if(!r.group||r.margin===""){errB=true;return;}validB.push(r);
   });
 
-  // VALIDATION FAILED — highlight RED, NO render, NO toast
-  if(!dateVal&&(validA.length||validB.length||errA||errB)){
-    highlightErrors(seg);
-    return;
-  }
-  if(errA||errB){
-    highlightErrors(seg);
+  // VALIDATION FAILED — turn on state-driven RED, render (RED persists because it's in the HTML)
+  const dateMissing = !dateVal&&(validA.length||validB.length||errA||errB);
+  if(dateMissing||errA||errB){
+    E.showErrors=true;
+    render();
+    // date field red (flatpickr) applied in initEntryDatePicker via showErrors
     return;
   }
   if(!validA.length&&!validB.length){return;}
 
+  E.showErrors=false;
   const ts=fmtNow();const disp=fmtDateDisplay(dateVal);const loginName=S.user.name||S.user.id||'';
   const newA=validA.map(r=>({timestamp:ts,date:disp,code:r.code,userId:r.userId,software:r.software,name:r.name,group:r.group,marginRMS:r.marginRMS,marginAllocated:r.marginAllocated,branchName:r.branchName,loginName:loginName}));
   const newB=validB.map(r=>({timestamp:ts,date:disp,group:r.group,margin:r.margin,loginName:loginName}));
