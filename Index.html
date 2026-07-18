@@ -920,9 +920,19 @@ const MASTER_ADD_FIELDS=[
 ];
 function openMasterAdd(seg){
   S.masterAdd={seg,code:"",userId:"",software:"",name:"",group:"",branchName:"",error:"",saving:false,showErrors:false};
-  render();
+  // Insert modal directly into DOM without full page re-render (avoids blink/flash)
+  const html=renderMasterAddModal();
+  if(html){
+    let container=document.getElementById('masterAddContainer');
+    if(!container){container=document.createElement('div');container.id='masterAddContainer';document.body.appendChild(container);}
+    container.innerHTML=html;
+  }
 }
-function closeMasterAdd(){ S.masterAdd=null; render(); }
+function closeMasterAdd(){
+  S.masterAdd=null;
+  const container=document.getElementById('masterAddContainer');
+  if(container)container.innerHTML='';
+}
 function masterAddOptions(seg,field){
   const rows=seg==='commodity'?S.masterCommodity:S.masterEquity;
   return Array.from(new Set(rows.map(r=>r[field]).filter(Boolean))).sort();
@@ -960,20 +970,29 @@ function renderMasterAddModal(){
     </div>
   </div>`;
 }
+// Re-render just the modal content (avoids full-page blink)
+function rerenderModal(){
+  const container=document.getElementById('masterAddContainer');
+  if(!container)return;
+  const html=renderMasterAddModal();
+  container.innerHTML=html||'';
+}
+
 async function saveMasterAdd(){
   const M=S.masterAdd;if(!M)return;
   const missing=MASTER_ADD_FIELDS.some(f=>!String(M[f.k]||'').trim());
-  if(missing){M.showErrors=true;M.error="Sabhi 6 fields bharna zaroori hai.";render();return;}
-  M.error="";M.saving=true;render();
+  if(missing){M.showErrors=true;M.error="Sabhi 6 fields bharna zaroori hai.";rerenderModal();return;}
+  M.error="";M.saving=true;rerenderModal();
   try{
     const result=await runServer('addMasterEntry',{
       segment:M.seg,code:M.code,userId:M.userId,software:M.software,name:M.name,group:M.group,branchName:M.branchName,loginId:S.user.id
     });
-    if(result.status!=='ok'){M.saving=false;M.error=result.message||'Save failed.';render();return;}
+    if(result.status!=='ok'){M.saving=false;M.error=result.message||'Save failed.';rerenderModal();return;}
     if(M.seg==='commodity')S.masterCommodity.push(result.row);else S.masterEquity.push(result.row);
-    S.masterAdd=null;
+    closeMasterAdd();
+    render(); // refresh the table to show the new row
     showToast("Master entry added successfully.",false);
-  }catch(err){M.saving=false;M.error=err.message;render();}
+  }catch(err){M.saving=false;M.error=err.message;rerenderModal();}
 }
 
 /* ============================= DATE RANGE PICKER (Table Filter) ============================= */
@@ -1233,7 +1252,7 @@ function render(){
   else if(S.page==='entryCommodity')inner=renderEntry('commodity');
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
-  app.innerHTML=renderShell(inner)+renderMasterAddModal();
+  app.innerHTML=renderShell(inner);
   if(S.page==='entryEquity'||S.page==='entryCommodity')initEntryDatePicker();
 }
 
