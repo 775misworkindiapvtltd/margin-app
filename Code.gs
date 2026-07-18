@@ -5,9 +5,15 @@
  *   Index.html   (the UI file)
  *
  * Required sheet tabs (names must match EXACTLY):
- *   LOGIN PAGE            -> NAME | ID | PASSWORD | EQUITY ENTRY | COMODDITY ENTRY | MASTER EQUITY | MASTER COMODDITY | RESPONSES 2 EQUITY | RESPONSES EQUITY | RESPONSES COMODDITY | RESPONSES 2 COMODDITY
- *   MASTER EQUITY         -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME
- *   MASTER COMODDITY      -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME
+ *   LOGIN PAGE            -> NAME | ID | PASSWORD | EQUITY ENTRY | COMODDITY ENTRY | MASTER EQUITY | MASTER COMODDITY | RESPONSES 2 EQUITY | RESPONSES EQUITY | RESPONSES COMODDITY | RESPONSES 2 COMODDITY | MASTER EQUITY ADD ENTRY | MASTER COMODDITY ADD ENTRY
+ *   MASTER EQUITY         -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME | TIMESTAMP | LOGIN ID
+ *   MASTER COMODDITY      -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME | TIMESTAMP | LOGIN ID
+ *
+ * NOTE: "MASTER EQUITY ADD ENTRY" / "MASTER COMODDITY ADD ENTRY" are new permission
+ * columns on LOGIN PAGE. Mark YES for a user to show them the "+ Add" button on the
+ * corresponding Master Data page (lets them add a new master row via a popup form).
+ * The code also tolerates the "MATER ..." (missing S) spelling in case that's what
+ * already exists in your sheet — either header name works.
  *   RESPONSES EQUITY      -> TIMESTAMP | SELECT DATE | CODE | USER ID | SOFTWARE | NAME | GROUP NAME | MARGIN AS PER RMS | MARGIN ALLOCATED ON ID | BRANCH NAME | LOGIN NAME
  *   RESPONSES COMODDITY   -> (same columns as RESPONSES EQUITY)
  *   RESPONSES 2 EQUITY    -> TIMESTAMP | SELECT DATE | GROUP NAME | GROUP MARGIN | LOGIN NAME
@@ -67,7 +73,11 @@ function isYes_(v) { return String(v || '').trim().toUpperCase() === 'YES'; }
 /* ---- Row mappers ---- */
 function mapMaster_(rows) {
   return rows.map(function (r) {
-    return { code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '', group: r['GROUP NAME'] || '', branchName: r['BRANCH NAME'] || '' };
+    return {
+      code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '',
+      group: r['GROUP NAME'] || '', branchName: r['BRANCH NAME'] || '',
+      timestamp: fmtTimestamp_(r['TIMESTAMP']), loginId: r['LOGIN ID'] || ''
+    };
   });
 }
 function mapResp1_(rows) {
@@ -85,6 +95,15 @@ function mapResp2_(rows) {
     return { timestamp: fmtTimestamp_(r['TIMESTAMP']), date: fmtDateOnly_(r['SELECT DATE']), group: r['GROUP NAME'] || '', margin: fmtValue_(r['GROUP MARGIN']), loginName: r['LOGIN NAME'] || '' };
   });
 }
+// Reads a header value tolerating a couple of alternate spellings (sheet owner has used
+// both "MASTER..." and "MATER..." across tabs). Returns the first header that is present.
+function pick_(r, names) {
+  for (var i = 0; i < names.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(r, names[i])) return r[names[i]];
+  }
+  return '';
+}
+
 function mapUser_(r) {
   return {
     name: r['NAME'] || '', id: String(r['ID'] || '').trim(), password: String(r['PASSWORD'] || '').trim(),
@@ -95,7 +114,9 @@ function mapUser_(r) {
     resp1Equity:     isYes_(r['RESPONSES EQUITY']),
     resp1Commodity:  isYes_(r['RESPONSES COMODDITY']),
     resp2Equity:     isYes_(r['RESPONSES 2 EQUITY']),
-    resp2Commodity:  isYes_(r['RESPONSES 2 COMODDITY'])
+    resp2Commodity:  isYes_(r['RESPONSES 2 COMODDITY']),
+    masterEquityAdd:    isYes_(pick_(r, ['MASTER EQUITY ADD ENTRY', 'MATER EQUITY ADD ENTRY'])),
+    masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY']))
   };
 }
 
@@ -111,7 +132,7 @@ function getUserPermissions(id) {
 
 function getBootstrapData() {
   var cache = CacheService.getScriptCache();
-  var cached = cache.get('bootstrap_v3');
+  var cached = cache.get('bootstrap_v4');
   if (cached) { try { return JSON.parse(cached); } catch (e) {} }
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -134,8 +155,56 @@ function getBootstrapData() {
     if (!have[SHEETS[k].toUpperCase()]) result.missingSheets.push(SHEETS[k]);
   });
 
-  try { cache.put('bootstrap_v3', JSON.stringify(result), 60); } catch (e) {}
+  try { cache.put('bootstrap_v4', JSON.stringify(result), 60); } catch (e) {}
   return result;
+}
+
+/**
+ * Add one new row to a MASTER sheet (Equity or Commodity).
+ * payload = { segment:'equity'|'commodity', code, userId, software, name, group, branchName, loginId }
+ * Appends CODE|USER ID|SOFTWARE|NAME|GROUP NAME|BRANCH NAME|TIMESTAMP|LOGIN ID.
+ * Server-side re-checks the "...ADD ENTRY" permission before writing, so this can't be
+ * called by a user who doesn't have the button shown to them.
+ */
+function addMasterEntry(payload) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    if (!payload) return { status: 'error', message: 'No data received.' };
+    var seg = payload.segment === 'commodity' ? 'commodity' : 'equity';
+
+    // Permission check (server-side, cannot be bypassed from the client)
+    var perms = getUserPermissions(payload.loginId);
+    var allowed = perms && (seg === 'commodity' ? perms.masterCommodityAdd : perms.masterEquityAdd);
+    if (!allowed) return { status: 'error', message: 'You do not have permission to add master entries.' };
+
+    var code = String(payload.code || '').trim();
+    var userId = String(payload.userId || '').trim();
+    var software = String(payload.software || '').trim();
+    var name = String(payload.name || '').trim();
+    var group = String(payload.group || '').trim();
+    var branchName = String(payload.branchName || '').trim();
+    if (!code || !userId || !software || !name || !group || !branchName) {
+      return { status: 'error', message: 'All 6 fields are required.' };
+    }
+
+    var sheetName = seg === 'commodity' ? SHEETS.masterComm : SHEETS.masterEquity;
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+    if (!sh) return { status: 'error', message: 'Sheet not found: ' + sheetName };
+
+    var now = new Date();
+    sh.getRange(sh.getLastRow() + 1, 1, 1, 8).setValues([[code, userId, software, name, group, branchName, now, payload.loginId || '']]);
+
+    CacheService.getScriptCache().remove('bootstrap_v4');
+    return {
+      status: 'ok', segment: seg,
+      row: { code: code, userId: userId, software: software, name: name, group: group, branchName: branchName, timestamp: fmtTimestamp_(now), loginId: payload.loginId || '' }
+    };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**

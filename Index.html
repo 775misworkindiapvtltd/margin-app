@@ -174,6 +174,22 @@ table.dt tbody tr:hover{background:var(--accent-tint2);}
 .dt-pagination .nav button:disabled{opacity:.35;cursor:default;}
 .dt-pagination .nav button:not(:disabled):hover{border-color:var(--accent);color:var(--accent-dark);background:var(--accent-tint2);}
 .dt-pagination .pageinfo{font-weight:600;color:var(--ink-secondary);white-space:nowrap;}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(12,16,23,.55);display:flex;align-items:center;justify-content:center;z-index:50;animation:toast-in .18s cubic-bezier(.2,.8,.4,1);}
+.modal-card{width:420px;max-width:92vw;background:var(--surface);border-radius:12px;box-shadow:0 30px 70px -20px rgba(0,0,0,.5);overflow:hidden;max-height:88vh;display:flex;flex-direction:column;}
+.modal-head{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex:none;background:linear-gradient(135deg,#0C1017,#1A2130);}
+.modal-head h3{font-size:14.5px;color:#fff;font-weight:600;}
+.modal-head .seg-badge{margin-left:8px;}
+.modal-close{border:none;background:transparent;color:#9A948A;cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;border-radius:6px;}
+.modal-close:hover{color:#fff;background:rgba(255,255,255,.08);}
+.modal-body{padding:20px 22px;overflow-y:auto;flex:1;}
+.modal-body .field{margin-bottom:15px;}
+.modal-body .field label{display:block;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;}
+.modal-body .field input{width:100%;padding:9px 12px;border:1.5px solid var(--line);border-radius:7px;background:#FAFAF7;color:var(--ink);transition:border .15s,box-shadow .15s;}
+.modal-body .field input:focus{outline:none;border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--accent-tint);}
+.modal-body .field input.cell-error{border-color:var(--danger);background:#FEF2F2;}
+.modal-error{background:var(--danger-tint);color:var(--danger);font-size:12px;padding:9px 12px;border-radius:8px;margin-bottom:14px;font-weight:500;}
+.modal-foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex:none;}
 </style>
 </head>
 <body>
@@ -201,6 +217,7 @@ let S = {
   toast:null, loginError:"",
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
+  masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
 function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
@@ -760,10 +777,13 @@ function renderDataTable(tableKey){
   }).join("");
   const bod=pageRows.length?pageRows.map((r,idx)=>`<tr><td style="text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px;">${si+idx+1}</td>${visCols.map(c=>{const v=r[c.key]==null?"":r[c.key];return`<td>${c.pill&&v?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length+1}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
   const rf=total===0?0:si+1;const rt=Math.min(si+ps,total);
+  const addPerm=tableKey==='masterEquity'?'masterEquityAdd':(tableKey==='masterCommodity'?'masterCommodityAdd':null);
+  const canAdd=addPerm&&S.user&&S.user[addPerm];
   return `
     <div class="dt-toolbar">
       <div class="count">${total} of ${def.data().length} rows</div>
       <button class="btn btn-ghost" data-action="syncnow" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
+      ${canAdd?`<button class="btn btn-gold" data-action="open-master-add" data-seg="${tableKey==='masterCommodity'?'commodity':'equity'}" style="padding:7px 14px;">+ Add</button>`:""}
       <div class="dt-colmenu-wrap">
         <button class="btn btn-ghost" data-action="togglecolmenu" data-table="${tableKey}" style="padding:7px 14px;">Columns ▾</button>
         ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / hide columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
@@ -785,6 +805,69 @@ function renderDataTable(tableKey){
     </div>`;
 }
 
+/* ============================= MASTER "+ ADD" POPUP ============================= */
+const MASTER_ADD_FIELDS=[
+  {k:'code',label:'Code'},{k:'userId',label:'User ID'},{k:'software',label:'Software'},
+  {k:'name',label:'Name'},{k:'group',label:'Group Name'},{k:'branchName',label:'Branch Name'}
+];
+function openMasterAdd(seg){
+  S.masterAdd={seg,code:"",userId:"",software:"",name:"",group:"",branchName:"",error:"",saving:false,showErrors:false};
+  render();
+}
+function closeMasterAdd(){ S.masterAdd=null; render(); }
+function masterAddOptions(seg,field){
+  const rows=seg==='commodity'?S.masterCommodity:S.masterEquity;
+  return Array.from(new Set(rows.map(r=>r[field]).filter(Boolean))).sort();
+}
+function onMasterAddInput(el){
+  if(!S.masterAdd)return;
+  const f=el.getAttribute('data-madd');if(!f)return;
+  S.masterAdd[f]=el.value;
+  if(el.classList.contains('cell-error')&&el.value)el.classList.remove('cell-error');
+}
+function renderMasterAddModal(){
+  const M=S.masterAdd;if(!M)return"";
+  const segLabel=M.seg==='commodity'?'Commodity':'Equity';
+  const fieldsHtml=MASTER_ADD_FIELDS.map(f=>{
+    const opts=masterAddOptions(M.seg,f.k);
+    const listId=`madd-${f.k}`;
+    const isErr=M.showErrors&&!String(M[f.k]||'').trim();
+    return `<div class="field">
+      <label>${f.label} <span class="req-star">*</span></label>
+      <input type="text" class="${isErr?'cell-error':''}" data-madd="${f.k}" list="${listId}" value="${esc(M[f.k])}" placeholder="Select or type ${esc(f.label.toLowerCase())}…" autocomplete="off">
+      <datalist id="${listId}">${opts.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>
+    </div>`;
+  }).join("");
+  return `<div class="modal-overlay" data-action="master-add-overlay">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-head"><h3>Add Master Entry <span class="seg-badge ${M.seg}">${segLabel}</span></h3><button class="modal-close" data-action="close-master-add">✕</button></div>
+      <div class="modal-body">
+        ${M.error?`<div class="modal-error">${esc(M.error)}</div>`:""}
+        ${fieldsHtml}
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-action="close-master-add">Cancel</button>
+        <button class="btn btn-gold" data-action="save-master-add" ${M.saving?'disabled':''}>${M.saving?'<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Saving…':'Save'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+async function saveMasterAdd(){
+  const M=S.masterAdd;if(!M)return;
+  const missing=MASTER_ADD_FIELDS.some(f=>!String(M[f.k]||'').trim());
+  if(missing){M.showErrors=true;M.error="Sabhi 6 fields bharna zaroori hai.";render();return;}
+  M.error="";M.saving=true;render();
+  try{
+    const result=await runServer('addMasterEntry',{
+      segment:M.seg,code:M.code,userId:M.userId,software:M.software,name:M.name,group:M.group,branchName:M.branchName,loginId:S.user.id
+    });
+    if(result.status!=='ok'){M.saving=false;M.error=result.message||'Save failed.';render();return;}
+    if(M.seg==='commodity')S.masterCommodity.push(result.row);else S.masterEquity.push(result.row);
+    S.masterAdd=null;
+    showToast("Master entry added successfully.",false);
+  }catch(err){M.saving=false;M.error=err.message;render();}
+}
+
 /* ============================= EVENTS ============================= */
 let resizeCtx=null,rowResizeCtx=null,eResizeCtx=null,filterTimer=null;
 document.addEventListener('submit',e=>{if(e.target&&e.target.id==='loginForm'){e.preventDefault();doLogin(document.getElementById('loginId').value,document.getElementById('loginPw').value);}});
@@ -799,6 +882,7 @@ document.addEventListener('input',e=>{
   // Remove red highlight when user types
   if(el.classList.contains('cell-error')&&el.value){el.classList.remove('cell-error');el.style.borderColor='';el.style.background='';}
   if(el.hasAttribute('data-a')||el.hasAttribute('data-b')){onEntryFieldInput(el);return;}
+  if(el.hasAttribute('data-madd')){onMasterAddInput(el);return;}
   if(el.getAttribute('data-action')==='filter'){
     const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');
     S.dt[t].filters[c]=el.value;
@@ -836,6 +920,9 @@ document.addEventListener('click',e=>{
   if(a==='togglesearch'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];st.filterOpen=st.filterOpen===c?null:c;render();if(st.filterOpen){const inp=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);if(inp)inp.focus();}return;}
   if(a==='togglecolmenu'){const t=el.getAttribute('data-table');S.colMenuOpen=S.colMenuOpen===t?null:t;render();return;}
   if(a==='togglecol'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.hidden.has(c))st.hidden.delete(c);else st.hidden.add(c);render();S.colMenuOpen=t;return;}
+  if(a==='open-master-add'){openMasterAdd(el.getAttribute('data-seg'));return;}
+  if(a==='close-master-add'||a==='master-add-overlay'){closeMasterAdd();return;}
+  if(a==='save-master-add'){saveMasterAdd();return;}
 });
 document.addEventListener('click',e=>{if(!e.target.closest('.dt-colmenu-wrap')&&S.colMenuOpen){S.colMenuOpen=null;render();}});
 
@@ -874,7 +961,7 @@ function render(){
   else if(S.page==='entryCommodity')inner=renderEntry('commodity');
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
-  app.innerHTML=renderShell(inner);
+  app.innerHTML=renderShell(inner)+renderMasterAddModal();
   if(S.page==='entryEquity'||S.page==='entryCommodity')initEntryDatePicker();
 }
 
