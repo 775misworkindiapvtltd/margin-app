@@ -158,8 +158,36 @@ table.dt thead th .search-ic{margin-left:auto;cursor:pointer;color:#6B7280;flex:
 table.dt thead th .search-ic:hover{color:var(--accent);}
 table.dt thead th .th-filter input{width:100%;padding:5px 8px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:11.5px;}
 table.dt thead th .th-filter input::placeholder{color:#5A6070;}
-table.dt thead th .th-date-filter{display:flex;gap:4px;}
-table.dt thead th .th-date-filter input[type="date"]{flex:1;padding:4px 6px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:10px;min-width:0;}
+table.dt thead th .th-date-filter{display:flex;gap:4px;align-items:center;}
+table.dt thead th .th-date-filter input[type="text"]{flex:1;padding:4px 8px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:10px;min-width:0;cursor:pointer;}
+table.dt thead th .th-date-filter .dr-clear{color:#9A948A;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:4px;}
+table.dt thead th .th-date-filter .dr-clear:hover{color:var(--danger);background:var(--danger-tint);}
+
+.dr-popup{position:fixed;z-index:60;background:var(--surface);border-radius:12px;box-shadow:0 20px 60px -10px rgba(0,0,0,.35);border:1.5px solid var(--line);display:flex;overflow:hidden;animation:toast-in .15s cubic-bezier(.2,.8,.4,1);}
+.dr-presets{width:130px;background:#F8F7F4;border-right:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:1px;}
+.dr-presets button{border:none;background:transparent;text-align:left;padding:7px 14px;font-size:11.5px;color:var(--ink-secondary);cursor:pointer;font-weight:500;transition:all .1s;}
+.dr-presets button:hover{background:var(--accent-tint);color:var(--accent-dark);}
+.dr-presets button.active{background:var(--accent);color:#fff;font-weight:600;}
+.dr-cal-area{padding:12px 16px;display:flex;flex-direction:column;gap:10px;}
+.dr-cal-months{display:flex;gap:16px;}
+.dr-cal-month{width:220px;}
+.dr-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.dr-cal-head .month-label{font-size:12px;font-weight:600;color:var(--ink);}
+.dr-cal-head button{border:none;background:transparent;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 6px;border-radius:4px;}
+.dr-cal-head button:hover{background:var(--accent-tint);color:var(--accent-dark);}
+.dr-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;}
+.dr-cal-grid .day-label{font-size:9px;color:var(--muted);font-weight:700;padding:4px 0;}
+.dr-cal-grid .day{font-size:11px;padding:5px 2px;border-radius:6px;cursor:pointer;color:var(--ink);transition:all .1s;user-select:none;}
+.dr-cal-grid .day:hover{background:var(--accent-tint);}
+.dr-cal-grid .day.other{color:var(--muted);opacity:.4;}
+.dr-cal-grid .day.today{font-weight:700;border:1.5px solid var(--accent);}
+.dr-cal-grid .day.in-range{background:var(--accent-tint);border-radius:0;}
+.dr-cal-grid .day.range-start{background:var(--accent);color:#fff;border-radius:6px 0 0 6px;}
+.dr-cal-grid .day.range-end{background:var(--accent);color:#fff;border-radius:0 6px 6px 0;}
+.dr-cal-grid .day.range-start.range-end{border-radius:6px;}
+.dr-foot{display:flex;align-items:center;justify-content:space-between;padding-top:8px;border-top:1px solid var(--line);}
+.dr-foot .dr-display{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-secondary);}
+.dr-foot .dr-btns{display:flex;gap:8px;}
 table.dt thead th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5;}
 table.dt thead th .resize-handle:hover,table.dt thead th .resize-handle.active{background:rgba(180,134,43,.5);}
 table.dt tbody td{padding:8px 12px;border-bottom:1px solid var(--line-light);border-right:1px solid #F2F0EA;font-size:12.5px;white-space:normal;word-break:break-word;vertical-align:top;overflow-wrap:anywhere;}
@@ -824,7 +852,8 @@ function renderDataTable(tableKey){
     if(fo){
       if(isDate){
         const df=st.dateFilters[c.key]||{from:'',to:''};
-        filterHtml=`<div class="th-filter th-date-filter"><input type="date" data-action="datefilter" data-table="${tableKey}" data-col="${c.key}" data-which="from" value="${esc(df.from||'')}" title="From date"><input type="date" data-action="datefilter" data-table="${tableKey}" data-col="${c.key}" data-which="to" value="${esc(df.to||'')}" title="To date"></div>`;
+        const dispVal=(df.from||df.to)?((df.from?fmtDR(new Date(df.from+'T00:00:00')):'…')+' – '+(df.to?fmtDR(new Date(df.to+'T00:00:00')):'…')):'';
+        filterHtml=`<div class="th-filter th-date-filter"><input type="text" readonly data-action="open-daterange" data-table="${tableKey}" data-col="${c.key}" value="${esc(dispVal)}" placeholder="Select date range…">${dispVal?`<span class="dr-clear" data-action="clear-daterange" data-table="${tableKey}" data-col="${c.key}">✕</span>`:''}</div>`;
       } else {
         filterHtml=`<div class="th-filter"><input type="text" placeholder="Filter…" data-action="filter" data-table="${tableKey}" data-col="${c.key}" value="${esc(st.filters[c.key]||'')}"></div>`;
       }
@@ -932,6 +961,130 @@ async function saveMasterAdd(){
   }catch(err){M.saving=false;M.error=err.message;render();}
 }
 
+/* ============================= DATE RANGE PICKER (Table Filter) ============================= */
+let drState=null; // {table,col,from:Date|null,to:Date|null,month1:Date,selecting:'from'|'to',presetKey:null}
+
+const DR_PRESETS=[
+  {key:'today',label:'Today',fn:()=>{const t=startOfDay(new Date());return[t,t];}},
+  {key:'yesterday',label:'Yesterday',fn:()=>{const d=new Date();d.setDate(d.getDate()-1);const t=startOfDay(d);return[t,t];}},
+  {key:'tomorrow',label:'Tomorrow',fn:()=>{const d=new Date();d.setDate(d.getDate()+1);const t=startOfDay(d);return[t,t];}},
+  {key:'thisWeek',label:'This Week',fn:()=>{const d=new Date();const s=new Date(d);s.setDate(d.getDate()-d.getDay());return[startOfDay(s),startOfDay(d)];}},
+  {key:'lastWeek',label:'Last Week',fn:()=>{const d=new Date();const e=new Date(d);e.setDate(d.getDate()-d.getDay()-1);const s=new Date(e);s.setDate(e.getDate()-6);return[startOfDay(s),startOfDay(e)];}},
+  {key:'last7',label:'Last 7 Days',fn:()=>{const d=new Date();const s=new Date(d);s.setDate(d.getDate()-6);return[startOfDay(s),startOfDay(d)];}},
+  {key:'last30',label:'Last 30 Days',fn:()=>{const d=new Date();const s=new Date(d);s.setDate(d.getDate()-29);return[startOfDay(s),startOfDay(d)];}},
+  {key:'thisMonth',label:'This Month',fn:()=>{const d=new Date();return[startOfDay(new Date(d.getFullYear(),d.getMonth(),1)),startOfDay(d)];}},
+  {key:'lastMonth',label:'Last Month',fn:()=>{const d=new Date();const e=new Date(d.getFullYear(),d.getMonth(),0);const s=new Date(e.getFullYear(),e.getMonth(),1);return[startOfDay(s),startOfDay(e)];}},
+];
+function startOfDay(d){return new Date(d.getFullYear(),d.getMonth(),d.getDate());}
+function fmtDR(d){if(!d)return'';const p=n=>String(n).padStart(2,'0');const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${p(d.getDate())}-${M[d.getMonth()]}-${d.getFullYear()}`;}
+function fmtISO(d){if(!d)return'';return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+
+function openDateRange(tableKey,colKey){
+  const st=S.dt[tableKey];
+  const existing=st.dateFilters&&st.dateFilters[colKey];
+  const from=existing&&existing.from?new Date(existing.from+'T00:00:00'):null;
+  const to=existing&&existing.to?new Date(existing.to+'T00:00:00'):null;
+  const m1=from||new Date();
+  drState={table:tableKey,col:colKey,from,to,month1:new Date(m1.getFullYear(),m1.getMonth(),1),selecting:null,presetKey:null};
+  renderDateRangePopup();
+}
+function closeDateRange(){drState=null;const el=document.getElementById('drPopup');if(el)el.remove();}
+function applyDateRange(){
+  if(!drState)return;
+  const st=S.dt[drState.table];
+  if(!st.dateFilters)st.dateFilters={};
+  if(drState.from||drState.to){
+    st.dateFilters[drState.col]={from:fmtISO(drState.from),to:fmtISO(drState.to)};
+  } else {
+    delete st.dateFilters[drState.col];
+  }
+  st.page=1;
+  closeDateRange();render();
+}
+function clearDateRange(){
+  if(!drState)return;
+  const st=S.dt[drState.table];
+  if(st.dateFilters)delete st.dateFilters[drState.col];
+  st.page=1;closeDateRange();render();
+}
+function drSelectDay(d){
+  if(!drState)return;
+  if(!drState.from||drState.to){drState.from=d;drState.to=null;drState.presetKey=null;}
+  else{
+    if(d<drState.from){drState.to=drState.from;drState.from=d;}
+    else drState.to=d;
+    drState.presetKey=null;
+  }
+  renderDateRangePopup();
+}
+function drSelectPreset(key){
+  const p=DR_PRESETS.find(x=>x.key===key);if(!p||!drState)return;
+  const[f,t]=p.fn();drState.from=f;drState.to=t;drState.presetKey=key;
+  drState.month1=new Date(f.getFullYear(),f.getMonth(),1);
+  renderDateRangePopup();
+}
+function drPrevMonth(){if(!drState)return;drState.month1.setMonth(drState.month1.getMonth()-1);renderDateRangePopup();}
+function drNextMonth(){if(!drState)return;drState.month1.setMonth(drState.month1.getMonth()+1);renderDateRangePopup();}
+
+function buildCalMonth(year,month){
+  const M=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const first=new Date(year,month,1);const startDow=first.getDay();
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const prevDays=new Date(year,month,0).getDate();
+  const today=startOfDay(new Date());
+  let cells='';
+  const dayLabels=['Su','Mo','Tu','We','Th','Fr','Sa'];
+  dayLabels.forEach(d=>{cells+=`<div class="day-label">${d}</div>`;});
+  for(let i=0;i<startDow;i++){cells+=`<div class="day other">${prevDays-startDow+1+i}</div>`;}
+  for(let d=1;d<=daysInMonth;d++){
+    const dt=new Date(year,month,d);
+    let cls='day';
+    if(dt.getTime()===today.getTime())cls+=' today';
+    if(drState){
+      if(drState.from&&dt.getTime()===drState.from.getTime())cls+=' range-start';
+      if(drState.to&&dt.getTime()===drState.to.getTime())cls+=' range-end';
+      if(drState.from&&drState.to&&dt>drState.from&&dt<drState.to)cls+=' in-range';
+      if(drState.from&&!drState.to&&dt.getTime()===drState.from.getTime())cls+=' range-start range-end';
+    }
+    cells+=`<div class="${cls}" data-drday="${fmtISO(dt)}">${d}</div>`;
+  }
+  const totalCells=startDow+daysInMonth;const rem=(7-totalCells%7)%7;
+  for(let i=1;i<=rem;i++){cells+=`<div class="day other">${i}</div>`;}
+  return{label:`${M[month]} ${year}`,cells};
+}
+
+function renderDateRangePopup(){
+  let el=document.getElementById('drPopup');
+  if(!el){el=document.createElement('div');el.id='drPopup';document.body.appendChild(el);}
+  if(!drState){el.remove();return;}
+  const m1y=drState.month1.getFullYear(),m1m=drState.month1.getMonth();
+  const m2=new Date(m1y,m1m+1,1);
+  const cal1=buildCalMonth(m1y,m1m);
+  const cal2=buildCalMonth(m2.getFullYear(),m2.getMonth());
+  const presetHtml=DR_PRESETS.map(p=>`<button class="${drState.presetKey===p.key?'active':''}" data-drpreset="${p.key}">${p.label}</button>`).join('');
+  const displayText=(drState.from?fmtDR(drState.from):'--')+' – '+(drState.to?fmtDR(drState.to):'--');
+  el.className='dr-popup';
+  el.innerHTML=`
+    <div class="dr-presets">${presetHtml}</div>
+    <div class="dr-cal-area">
+      <div class="dr-cal-months">
+        <div class="dr-cal-month"><div class="dr-cal-head"><button data-drnav="prev">‹</button><span class="month-label">${cal1.label}</span><span></span></div><div class="dr-cal-grid">${cal1.cells}</div></div>
+        <div class="dr-cal-month"><div class="dr-cal-head"><span></span><span class="month-label">${cal2.label}</span><button data-drnav="next">›</button></div><div class="dr-cal-grid">${cal2.cells}</div></div>
+      </div>
+      <div class="dr-foot"><span class="dr-display">${displayText}</span><div class="dr-btns"><button class="btn btn-ghost" data-draction="cancel" style="padding:6px 14px;font-size:11px;">Cancel</button><button class="btn btn-gold" data-draction="apply" style="padding:6px 14px;font-size:11px;">Apply</button></div></div>
+    </div>`;
+  // Position near the column header
+  const anchor=document.querySelector(`th[data-col="${drState.col}"] .search-ic`);
+  if(anchor){
+    const rect=anchor.getBoundingClientRect();
+    el.style.position='fixed';
+    el.style.top=Math.min(rect.bottom+6,window.innerHeight-400)+'px';
+    el.style.left=Math.max(10,Math.min(rect.left-200,window.innerWidth-620))+'px';
+  } else {
+    el.style.position='fixed';el.style.top='100px';el.style.left='200px';
+  }
+}
+
 /* ============================= EVENTS ============================= */
 let resizeCtx=null,rowResizeCtx=null,eResizeCtx=null,filterTimer=null;
 document.addEventListener('submit',e=>{if(e.target&&e.target.id==='loginForm'){e.preventDefault();doLogin(document.getElementById('loginId').value,document.getElementById('loginPw').value);}});
@@ -962,13 +1115,6 @@ document.addEventListener('change',e=>{
   const el=e.target;
   if(el.tagName==='SELECT'&&(el.hasAttribute('data-a')||el.hasAttribute('data-b'))){onEntryFieldInput(el);return;}
   if(el.getAttribute('data-action')==='pagesize'){const t=el.getAttribute('data-table');S.dt[t].pageSize=parseInt(el.value,10);S.dt[t].page=1;render();}
-  if(el.getAttribute('data-action')==='datefilter'){
-    const t=el.getAttribute('data-table'),c=el.getAttribute('data-col'),which=el.getAttribute('data-which');
-    if(!S.dt[t].dateFilters)S.dt[t].dateFilters={};
-    if(!S.dt[t].dateFilters[c])S.dt[t].dateFilters[c]={from:'',to:''};
-    S.dt[t].dateFilters[c][which]=el.value;
-    S.dt[t].page=1;render();
-  }
 });
 
 document.addEventListener('click',e=>{
@@ -988,7 +1134,14 @@ document.addEventListener('click',e=>{
   if(a==='pageprev'){const st=S.dt[el.getAttribute('data-table')];st.page=Math.max(1,st.page-1);render();return;}
   if(a==='pagenext'){S.dt[el.getAttribute('data-table')].page++;render();return;}
   if(a==='pagelast'){S.dt[el.getAttribute('data-table')].page=999999;render();return;}
-  if(a==='togglesearch'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];st.filterOpen=st.filterOpen===c?null:c;render();if(st.filterOpen){const inp=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);if(inp)inp.focus();}return;}
+  if(a==='togglesearch'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];
+    if(isDateColumn(c)){
+      // For date columns, directly open the date range picker popup
+      st.filterOpen=st.filterOpen===c?null:c;render();
+      if(st.filterOpen===c)openDateRange(t,c);
+      return;
+    }
+    st.filterOpen=st.filterOpen===c?null:c;render();if(st.filterOpen){const inp=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);if(inp)inp.focus();}return;}
   if(a==='togglecolmenu'){const t=el.getAttribute('data-table');S.colMenuOpen=S.colMenuOpen===t?null:t;render();return;}
   if(a==='togglecol'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.hidden.has(c))st.hidden.delete(c);else st.hidden.add(c);render();S.colMenuOpen=t;return;}
   if(a==='open-master-add'){openMasterAdd(el.getAttribute('data-seg'));return;}
@@ -998,8 +1151,34 @@ document.addEventListener('click',e=>{
     if(el===e.target)closeMasterAdd();return;
   }
   if(a==='save-master-add'){saveMasterAdd();return;}
+  if(a==='open-daterange'){openDateRange(el.getAttribute('data-table'),el.getAttribute('data-col'));return;}
+  if(a==='clear-daterange'){
+    const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');
+    if(S.dt[t].dateFilters)delete S.dt[t].dateFilters[c];
+    S.dt[t].page=1;render();return;
+  }
 });
 document.addEventListener('click',e=>{if(!e.target.closest('.dt-colmenu-wrap')&&S.colMenuOpen){S.colMenuOpen=null;render();}});
+// Date range popup clicks
+document.addEventListener('click',e=>{
+  if(!drState)return;
+  const popup=document.getElementById('drPopup');
+  if(!popup)return;
+  // Click outside popup closes it
+  if(!popup.contains(e.target)&&!e.target.closest('[data-action="open-daterange"]')&&!e.target.closest('.search-ic')){closeDateRange();return;}
+  // Preset buttons
+  const preset=e.target.closest('[data-drpreset]');
+  if(preset){drSelectPreset(preset.getAttribute('data-drpreset'));return;}
+  // Day cells
+  const day=e.target.closest('[data-drday]');
+  if(day){const iso=day.getAttribute('data-drday');drSelectDay(new Date(iso+'T00:00:00'));return;}
+  // Nav (prev/next month)
+  const nav=e.target.closest('[data-drnav]');
+  if(nav){if(nav.getAttribute('data-drnav')==='prev')drPrevMonth();else drNextMonth();return;}
+  // Apply / Cancel
+  const action=e.target.closest('[data-draction]');
+  if(action){if(action.getAttribute('data-draction')==='apply')applyDateRange();else closeDateRange();return;}
+});
 
 document.addEventListener('mousedown',e=>{
   const erEl=e.target.closest('.eresize');
