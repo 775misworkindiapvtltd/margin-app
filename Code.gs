@@ -6,13 +6,15 @@
  *
  * Required sheet tabs (names must match EXACTLY):
  *   LOGIN PAGE            -> NAME | ID | PASSWORD | EQUITY ENTRY | COMODDITY ENTRY | MASTER EQUITY | MASTER COMODDITY | RESPONSES 2 EQUITY | RESPONSES EQUITY | RESPONSES COMODDITY | RESPONSES 2 COMODDITY
- *   MASTER EQUITY         -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME
- *   MASTER COMODDITY      -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME
+ *   MASTER EQUITY         -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME
+ *   MASTER COMODDITY      -> CODE | USER ID | SOFTWARE | NAME | GROUP NAME | BRANCH NAME
  *   RESPONSES EQUITY      -> TIMESTAMP | SELECT DATE | CODE | USER ID | SOFTWARE | NAME | GROUP NAME | MARGIN AS PER RMS | MARGIN ALLOCATED ON ID | BRANCH NAME | LOGIN NAME
  *   RESPONSES COMODDITY   -> (same columns as RESPONSES EQUITY)
  *   RESPONSES 2 EQUITY    -> TIMESTAMP | SELECT DATE | GROUP NAME | GROUP MARGIN | LOGIN NAME
  *   RESPONSES 2 COMODDITY -> (same columns as RESPONSES 2 EQUITY)
- *   DROPDOWN              -> Branch names in Column B
+ *
+ * NOTE: Branch Name is now read from the MASTER sheets (per CODE), same as
+ * User ID / Software / Name / Group Name — NOT from a separate DROPDOWN sheet.
  *
  * Deploy: Deploy > New deployment > type "Web app" > Execute as "Me" > Who has access "Anyone" > Deploy.
  */
@@ -65,7 +67,7 @@ function isYes_(v) { return String(v || '').trim().toUpperCase() === 'YES'; }
 /* ---- Row mappers ---- */
 function mapMaster_(rows) {
   return rows.map(function (r) {
-    return { code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '', group: r['GROUP NAME'] || '' };
+    return { code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '', group: r['GROUP NAME'] || '', branchName: r['BRANCH NAME'] || '' };
   });
 }
 function mapResp1_(rows) {
@@ -122,8 +124,6 @@ function getBootstrapData() {
     resp2Equity:     mapResp2_(sheetToObjects_(SHEETS.resp2Equity)),
     resp2Commodity:  mapResp2_(sheetToObjects_(SHEETS.resp2Comm)),
     users:           sheetToObjects_(SHEETS.login).map(mapUser_),
-    branchName:      [],
-    branchError:     '',
     missingSheets:   []
   };
 
@@ -133,30 +133,6 @@ function getBootstrapData() {
   Object.keys(SHEETS).forEach(function (k) {
     if (!have[SHEETS[k].toUpperCase()]) result.missingSheets.push(SHEETS[k]);
   });
-
-  // Branch names from DROPDOWN tab, column B
-  try {
-    var ddSheet = null, allSheets = ss.getSheets();
-    for (var s = 0; s < allSheets.length; s++) {
-      var nm = allSheets[s].getName().trim().toUpperCase();
-      if (nm === 'DROPDOWN' || nm === 'DROPDOWNS' || nm === 'DROP DOWN') { ddSheet = allSheets[s]; break; }
-    }
-    if (ddSheet) {
-      var lastRow = ddSheet.getLastRow();
-      if (lastRow >= 1) {
-        var ddData = ddSheet.getRange('B1:B' + lastRow).getValues(), seen = {};
-        ddData.forEach(function (row) {
-          var v = String(row[0] || '').trim();
-          if (v && v.toUpperCase() !== 'BRANCH NAME' && v.toUpperCase() !== 'BRANCH' && v.toUpperCase() !== 'NAME' && !seen[v]) {
-            result.branchName.push(v); seen[v] = true;
-          }
-        });
-        result.branchName.sort();
-      }
-    } else {
-      result.branchError = 'DROPDOWN sheet not found.';
-    }
-  } catch (e) { result.branchError = e.message; }
 
   try { cache.put('bootstrap_v3', JSON.stringify(result), 60); } catch (e) {}
   return result;

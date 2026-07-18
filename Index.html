@@ -196,7 +196,7 @@ let S = {
   ready:false, loadError:"", user:null, page:null, syncing:false, sidebarOpen:false,
   masterEquity:[], masterCommodity:[],
   respEquity:[], respCommodity:[], resp2Equity:[], resp2Commodity:[],
-  users:[], branchName:[], branchError:"", missingSheets:[],
+  users:[], missingSheets:[],
   entry:{ equity:freshSeg(), commodity:freshSeg() },
   toast:null, loginError:"",
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
@@ -221,7 +221,7 @@ function applyBootstrap(data){
   S.masterEquity=data.masterEquity||[]; S.masterCommodity=data.masterCommodity||[];
   S.respEquity=data.respEquity||[]; S.respCommodity=data.respCommodity||[];
   S.resp2Equity=data.resp2Equity||[]; S.resp2Commodity=data.resp2Commodity||[];
-  S.users=data.users||[]; S.branchName=data.branchName||[]; S.branchError=data.branchError||''; S.missingSheets=data.missingSheets||[];
+  S.users=data.users||[]; S.missingSheets=data.missingSheets||[];
 }
 
 async function loadAll(){
@@ -252,6 +252,8 @@ function masterFor(seg){ return seg==='commodity'?S.masterCommodity:S.masterEqui
 function uniqueCodes(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.code).filter(Boolean))).sort(); }
 function matchesForCode(seg,code){ return masterFor(seg).filter(m=>m.code===code); }
 function groupNamesList(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.group).filter(Boolean))).sort(); }
+// Distinct branch names for a given code+userId match set (mirrors userId cascading logic)
+function branchesForMatches(ms){ return Array.from(new Set(ms.map(m=>m.branchName).filter(Boolean))); }
 
 /* ============================= HELPERS ============================= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return "&#"+c.charCodeAt(0)+";";});}
@@ -452,7 +454,7 @@ function highlightErrors(seg){
     if(!r.software) markRed(row.querySelector('[data-field="software"]'));
     if(!r.name) markRed(row.querySelector('[data-field="name"]'));
     if(!r.group) markRed(row.querySelector('[data-field="group"]'));
-    if(!r.branchName) markRed(row.querySelector('[data-a="branchName"]'));
+    if(!r.branchName) markRed(row.querySelector('[data-a="branchName"],[data-field="branchName"]'));
     if(r.marginRMS==="") markRed(row.querySelector('[data-a="marginRMS"]'));
     if(r.marginAllocated==="") markRed(row.querySelector('[data-a="marginAllocated"]'));
   });
@@ -469,9 +471,10 @@ function highlightErrors(seg){
 function updateDependentFields(i){
   const seg=currentSegment();if(!seg)return;const r=S.entry[seg].rowsA[i];
   const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
-  const uid=row.querySelector('[data-field="userId"]'),sw=row.querySelector('[data-field="software"]'),nm=row.querySelector('[data-field="name"]'),gp=row.querySelector('[data-field="group"]');
+  const uid=row.querySelector('[data-field="userId"]'),sw=row.querySelector('[data-field="software"]'),nm=row.querySelector('[data-field="name"]'),gp=row.querySelector('[data-field="group"]'),br=row.querySelector('[data-field="branchName"]');
   if(uid){ if(uid.tagName==='INPUT'&&uid!==document.activeElement) uid.value=r.userId; else if(uid.tagName==='DIV') uid.textContent=r.userId; }
   if(sw) sw.textContent=r.software; if(nm) nm.textContent=r.name; if(gp) gp.textContent=r.group;
+  if(br){ if(br.tagName==='INPUT'&&br!==document.activeElement) br.value=r.branchName; else if(br.tagName==='DIV') br.textContent=r.branchName; }
 }
 
 function onEntryFieldInput(el){
@@ -481,8 +484,11 @@ function onEntryFieldInput(el){
   if(aF==='code'){
     E.rowsA[i].code=el.value;
     const ms=el.value?matchesForCode(seg,el.value):[];
+    const distinctBranches=branchesForMatches(ms);
     if(ms.length===1){E.rowsA[i].userId=ms[0].userId;E.rowsA[i].software=ms[0].software;E.rowsA[i].name=ms[0].name;E.rowsA[i].group=ms[0].group;}
     else{E.rowsA[i].userId="";E.rowsA[i].software="";E.rowsA[i].name="";E.rowsA[i].group="";}
+    // Branch Name follows the same rule as User ID: multiple distinct values for the code -> user must pick; else auto-fill.
+    E.rowsA[i].branchName=(distinctBranches.length===1)?distinctBranches[0]:"";
     updateDependentFields(i);return;
   }
   if(aF==='userId'){
@@ -501,6 +507,7 @@ function renderEntry(seg){
   const segLabel=seg==='commodity'?'Commodity':'Equity';
   const tblA=E.rowsA.map((r,i)=>{
     const ms=r.code?matchesForCode(seg,r.code):[];
+    const distinctBranches=branchesForMatches(ms);
     // Error highlight logic — driven by state so render() never wipes it
     const anyA=r.code||r.userId!==""||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
     const showE=E.showErrors&&anyA;
@@ -512,6 +519,11 @@ function renderEntry(seg){
       const uids=Array.from(new Set(ms.map(m=>m.userId)));
       uidCell=`<input type="text" class="${(showE&&!r.userId)?'cell-error':''}" data-field="userId" list="ul-${i}" data-a="userId" data-i="${i}" value="${esc(r.userId)}" placeholder="Type…" autocomplete="off"><datalist id="ul-${i}">${uids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist>`;
     }
+    // Branch Name — from MASTER, same auto-pick rule as User ID: multiple distinct branches for the code -> dropdown, else auto-filled/non-editable.
+    let branchCell;
+    if(!r.code) branchCell=`<div class="cell-ro${ec(true)}" data-field="branchName"></div>`;
+    else if(distinctBranches.length<=1) branchCell=`<div class="cell-ro${ec(!r.branchName)}" data-field="branchName">${esc(r.branchName)}</div>`;
+    else branchCell=`<input type="text" class="${(showE&&!r.branchName)?'cell-error':''}" data-field="branchName" list="bl-${i}" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="Select branch…" autocomplete="off"><datalist id="bl-${i}">${distinctBranches.map(b=>`<option value="${esc(b)}">`).join("")}</datalist>`;
     return `<tr data-rowa="${i}">
       <td class="rownum">${i+1}</td>
       <td><input type="text" class="${(showE&&!r.code)?'cell-error':''}" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
@@ -519,7 +531,7 @@ function renderEntry(seg){
       <td><div class="cell-ro${ec(!r.software)}" data-field="software">${esc(r.software)}</div></td>
       <td><div class="cell-ro${ec(!r.name)}" data-field="name">${esc(r.name)}</div></td>
       <td><div class="cell-ro${ec(!r.group)}" data-field="group">${esc(r.group)}</div></td>
-      <td><input type="text" class="${(showE&&!r.branchName)?'cell-error':''}" list="branchlist" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="${S.branchName.length?'Select branch…':'—'}" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
+      <td>${branchCell}</td>
       <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
       <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
@@ -575,8 +587,7 @@ function renderEntry(seg){
       </div>
     </div>
     <datalist id="codelist">${uniqueCodes(seg).map(c=>`<option value="${esc(c)}">`).join("")}</datalist>
-    <datalist id="grouplist">${groupNamesList(seg).map(g=>`<option value="${esc(g)}">`).join("")}</datalist>
-    <datalist id="branchlist">${S.branchName.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>`;
+    <datalist id="grouplist">${groupNamesList(seg).map(g=>`<option value="${esc(g)}">`).join("")}</datalist>`;
 }
 
 async function submitEntry(){
