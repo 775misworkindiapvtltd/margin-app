@@ -259,9 +259,14 @@ table.rpt-table .rpt-td-code{padding:5px 6px;border-right:1px solid var(--line-l
 table.rpt-table .rpt-td-code .code-pill{border-radius:2px;}
 table.rpt-table .rpt-td{padding:5px 6px;border-right:1px solid var(--line-light);white-space:nowrap;}
 table.rpt-table .rpt-td-name{white-space:normal;word-break:break-word;max-width:200px;}
-table.rpt-table .rpt-td-empty{padding:5px;border-right:2px solid var(--line-light);color:var(--muted);text-align:center;font-size:9px;}
+table.rpt-table .rpt-td-empty{padding:5px;color:var(--muted);text-align:center;font-size:9px;}
 table.rpt-table .rpt-td-data{padding:4px 6px;border-right:1px solid var(--line-light);font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.6;white-space:nowrap;}
 table.rpt-table .rpt-td-num{padding:4px 6px;border-right:1px solid var(--line-light);font-family:'JetBrains Mono',monospace;font-size:10.5px;text-align:right;line-height:1.6;}
+table.rpt-table .rpt-month-border{border-left:3px solid var(--accent) !important;}
+table.rpt-table .rpt-month-end{border-right:3px solid var(--accent) !important;}
+table.rpt-table .rpt-th-fixed .rpt-resize{position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:5;}
+table.rpt-table .rpt-th-fixed .rpt-resize:hover{background:rgba(180,134,43,.5);}
+table.rpt-table .rpt-th-fixed{position:relative;}
 table.rpt-table .rpt-empty{padding:40px;text-align:center;color:var(--muted);font-size:13px;}
 </style>
 </head>
@@ -291,9 +296,10 @@ let S = {
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
   masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
-  report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all'},
+  report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all',widths:{}},
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
+try{ const rw=localStorage.getItem('margin_rpt_widths'); if(rw) S.report.widths=JSON.parse(rw); }catch(e){}
 function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
 function freshRows(){ S.entry={equity:freshSeg(),commodity:freshSeg()}; }
 
@@ -1054,13 +1060,14 @@ function renderReport(seg){
     });
   }
 
-  // Fixed columns header with sort icons + inline search
-  const RPT_FIXED_COLS=[{k:'code',l:'Code'},{k:'userId',l:'User ID'},{k:'software',l:'Software'},{k:'name',l:'Name'},{k:'group',l:'Group Name'}];
-  const fixedHdr=`<th class="rpt-th-fixed" style="cursor:default;">S.No</th>`+RPT_FIXED_COLS.map(c=>{
+  // Fixed columns header with sort icons + inline search + resize handles
+  const RPT_FIXED_COLS=[{k:'code',l:'Code',def:90},{k:'userId',l:'User ID',def:90},{k:'software',l:'Software',def:80},{k:'name',l:'Name',def:200},{k:'group',l:'Group Name',def:120}];
+  const fixedHdr=`<th class="rpt-th-fixed" style="cursor:default;width:32px;min-width:32px;">S.No</th>`+RPT_FIXED_COLS.map(c=>{
     const si=R.sort===c.k?(R.sortDir===1?'▲':'▼'):'';
-    return `<th class="rpt-th-fixed" data-action="rpt-sort" data-col="${c.k}">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div></th>`;
+    const w=R.widths[c.k]||c.def;
+    return `<th class="rpt-th-fixed" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;min-width:${w}px;max-width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
   }).join('');
-  const monthHdr=months.map(mo=>`<th class="rpt-th-month" colspan="3"><div class="rpt-month-label">${mo.label}</div><div class="rpt-sub-hdr"><span>Date</span><span>Margin RMS</span><span>Margin ON ID</span></div></th>`).join('');
+  const monthHdr=months.map((mo,mi)=>`<th class="rpt-th-month${mi>0?' rpt-month-border':''}" colspan="3"><div class="rpt-month-label">${mo.label}</div><div class="rpt-sub-hdr"><span>Date</span><span>Margin RMS</span><span>Margin ON ID</span></div></th>`).join('');
 
   // Per-column filter
   RPT_FIXED_COLS.forEach(c=>{
@@ -1072,16 +1079,17 @@ function renderReport(seg){
   const bodyRows=groupList.map((g,idx)=>{
     const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td">${esc(g.group)}</td>`;
 
-    const monthCells=months.map(mo=>{
+    const monthCells=months.map((mo,mi)=>{
       const mEntries=g.entries.filter(e=>{
         const d=parseDT(e.timestamp)||parseDT(e.date);if(!d)return false;
         const dt=new Date(d);return dt.getMonth()===mo.m&&dt.getFullYear()===mo.y;
       });
-      if(!mEntries.length) return `<td class="rpt-td rpt-td-empty" colspan="3"></td>`;
+      const borderCls=mi>0?' rpt-month-border':'';
+      if(!mEntries.length) return `<td class="rpt-td rpt-td-empty${borderCls}" colspan="3"></td>`;
       const dateCol=mEntries.map(e=>esc(e.date||'')).join('<br>');
       const rmsCol=mEntries.map(e=>esc(String(e.marginRMS||''))).join('<br>');
       const allocCol=mEntries.map(e=>esc(String(e.marginAllocated||''))).join('<br>');
-      return `<td class="rpt-td rpt-td-data">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num">${allocCol}</td>`;
+      return `<td class="rpt-td rpt-td-data${borderCls}">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num rpt-month-end">${allocCol}</td>`;
     }).join('');
 
     return `<tr>${fixedCells}${monthCells}</tr>`;
@@ -1435,6 +1443,8 @@ document.addEventListener('click',e=>{
 });
 
 document.addEventListener('mousedown',e=>{
+  const rptResize=e.target.closest('.rpt-resize');
+  if(rptResize){const th=rptResize.closest('th');const col=rptResize.getAttribute('data-col');eResizeCtx={col,th,startX:e.clientX,startW:th.getBoundingClientRect().width,isRpt:true};e.preventDefault();return;}
   const erEl=e.target.closest('.eresize');
   if(erEl){const th=erEl.closest('th');const col=erEl.getAttribute('data-ecol');eResizeCtx={col,th,startX:e.clientX,startW:th.getBoundingClientRect().width};e.preventDefault();return;}
   const rrEl=e.target.closest('.row-resize');
@@ -1451,7 +1461,10 @@ document.addEventListener('mousemove',e=>{
   if(th){th.style.width=nw+'px';th.style.minWidth=nw+'px';th.style.maxWidth=nw+'px';}
 });
 document.addEventListener('mouseup',e=>{
-  if(eResizeCtx){const nw=Math.max(30,Math.round(eResizeCtx.startW+(e.clientX-eResizeCtx.startX)));S.entryWidths[eResizeCtx.col]=nw;saveEntryWidths();eResizeCtx=null;return;}
+  if(eResizeCtx){const nw=Math.max(30,Math.round(eResizeCtx.startW+(e.clientX-eResizeCtx.startX)));
+    if(eResizeCtx.isRpt){S.report.widths[eResizeCtx.col]=nw;try{localStorage.setItem('margin_rpt_widths',JSON.stringify(S.report.widths));}catch(e){}}
+    else{S.entryWidths[eResizeCtx.col]=nw;saveEntryWidths();}
+    eResizeCtx=null;return;}
   if(rowResizeCtx){rowResizeCtx=null;return;}
   if(!resizeCtx)return;
   S.dt[resizeCtx.t].widths[resizeCtx.c]=Math.max(60,Math.round(resizeCtx.startW+(e.clientX-resizeCtx.startX)));
