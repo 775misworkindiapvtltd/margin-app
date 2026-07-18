@@ -51,8 +51,11 @@ html.dark .flatpickr-alt{background:#1A1F28 !important;border-color:#2A2F38 !imp
 html.dark .dt-table-wrap{background:var(--surface);border-color:var(--line);}
 html.dark .rpt-table-wrap{background:var(--surface);border-color:var(--line);}
 html.dark table.dt tbody td{border-color:var(--line-light);color:var(--ink);}
+html.dark table.dt tbody td.sno-cell{background:#0A0E14;border-right-color:var(--line);}
 html.dark table.dt tbody tr:nth-child(even){background:#0F141B;}
+html.dark table.dt tbody tr:nth-child(even) td.sno-cell{background:#080C12;}
 html.dark table.dt tbody tr:hover{background:var(--accent-tint);}
+html.dark table.dt tbody tr:hover td.sno-cell{background:#1A1710;}
 html.dark .dt-pagination{background:var(--surface);border-color:var(--line);color:var(--ink-secondary);}
 html.dark .dt-pagination select{background:#1A1F28;border-color:#2A2F38;color:var(--ink);}
 html.dark .dt-pagination .nav button{background:#1A1F28;border-color:#2A2F38;color:var(--ink-secondary);}
@@ -197,26 +200,29 @@ table.entry input.num{font-family:'JetBrains Mono',monospace;text-align:right;}
 .trash-btn{border:none;background:transparent;color:var(--danger);cursor:pointer;padding:6px;border-radius:6px;line-height:1;display:inline-flex;align-items:center;justify-content:center;opacity:.6;transition:all .15s;}
 .trash-btn:hover{background:var(--danger-tint);opacity:1;}
 
-.dt-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex:none;flex-wrap:wrap;}
-.dt-toolbar .count{font-size:12px;color:var(--muted);font-weight:500;}
+.dt-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex:none;flex-wrap:wrap;}
+.dt-toolbar .count{font-size:12px;color:var(--muted);font-weight:500;font-family:'JetBrains Mono',monospace;}
 .dt-colmenu-wrap{position:relative;margin-left:auto;}
-.dt-colmenu{position:absolute;right:0;top:38px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.12);padding:12px;min-width:200px;z-index:20;}
+.dt-colmenu{position:absolute;right:0;top:38px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.12);padding:12px;min-width:220px;max-height:360px;overflow-y:auto;z-index:20;}
 .dt-colmenu .h{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.08em;font-weight:700;margin-bottom:8px;}
 .dt-colmenu label{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:5px 4px;cursor:pointer;border-radius:4px;}
 .dt-colmenu label:hover{background:var(--accent-tint2);}
 .dt-table-wrap{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.04);}
 .dt-scroll{flex:1;overflow:auto;min-height:0;}
 table.dt{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content;}
-table.dt thead th{position:sticky;top:0;background:#0F141B;color:#D6CFC0;z-index:4;padding:0;border-right:1px solid #1E2531;overflow:hidden;}
-table.dt thead th .th-inner{padding:9px 12px;display:flex;flex-direction:column;gap:5px;position:relative;min-height:36px;}
+table.dt thead th{position:sticky;top:0;background:#0F141B;color:#D6CFC0;z-index:4;padding:0;border-right:1px solid #1E2531;overflow:visible;}
+table.dt thead th .th-inner{padding:9px 12px;display:flex;flex-direction:column;gap:4px;position:relative;min-height:36px;}
 table.dt thead th .th-row{display:flex;align-items:center;gap:6px;}
 table.dt thead th .th-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+table.dt thead th .th-label.no-sort{cursor:default;}
 table.dt thead th .sort-ic{font-size:9px;color:var(--accent);width:10px;flex:none;}
 table.dt thead th .search-ic{margin-left:auto;cursor:pointer;color:#6B7280;flex:none;font-size:11px;transition:color .15s;}
 table.dt thead th .search-ic:hover{color:var(--accent);}
+table.dt thead th .search-ic.active{color:var(--accent);}
+table.dt thead th .th-filter{margin-top:3px;}
 table.dt thead th .th-filter input{width:100%;padding:5px 8px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:11.5px;}
 table.dt thead th .th-filter input::placeholder{color:#5A6070;}
-table.dt thead th .th-date-filter{display:flex;gap:4px;align-items:center;}
+table.dt thead th .th-date-filter{display:flex;gap:4px;align-items:center;margin-top:3px;}
 table.dt thead th .th-date-filter input[type="text"]{flex:1;padding:4px 8px;border-radius:5px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:10px;min-width:0;cursor:pointer;}
 table.dt thead th .th-date-filter .dr-clear{color:#9A948A;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:4px;}
 table.dt thead th .th-date-filter .dr-clear:hover{color:var(--danger);background:var(--danger-tint);}
@@ -248,20 +254,26 @@ table.dt thead th .th-date-filter .dr-clear:hover{color:var(--danger);background
 .dr-foot .dr-btns{display:flex;gap:8px;}
 table.dt thead th .resize-handle{position:absolute;right:0;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5;}
 table.dt thead th .resize-handle:hover,table.dt thead th .resize-handle.active{background:rgba(180,134,43,.5);}
+table.dt thead th.sno-col{background:#080C12;}
+table.dt thead th.sno-col .th-label{cursor:default;color:#8A8479;}
 table.dt tbody td{padding:8px 12px;border-bottom:1px solid var(--line-light);border-right:1px solid #F2F0EA;font-size:12.5px;white-space:normal;word-break:break-word;vertical-align:top;overflow-wrap:anywhere;}
+table.dt tbody td.sno-cell{text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;background:#FAFAF7;border-right:2px solid var(--line);}
 table.dt tbody tr:nth-child(even){background:#FAFAF7;}
+table.dt tbody tr:nth-child(even) td.sno-cell{background:#F2F0EA;}
 table.dt tbody tr:hover{background:var(--accent-tint2);}
+table.dt tbody tr:hover td.sno-cell{background:var(--accent-tint);}
 .code-pill{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:var(--accent-dark);background:var(--accent-tint);border-radius:5px;padding:3px 8px;display:inline-block;}
 .empty-state{padding:60px 20px;text-align:center;color:var(--muted);}
 .empty-state .big{font-family:'Space Grotesk',sans-serif;font-size:15px;color:var(--ink-secondary);margin-bottom:6px;font-weight:600;}
-.dt-pagination{display:flex;align-items:center;gap:16px;flex-wrap:wrap;flex:none;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px;font-size:12px;color:var(--muted);font-weight:500;}
+.dt-pagination{display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px;font-size:12px;color:var(--muted);font-weight:500;}
 .dt-pagination .pp{display:flex;align-items:center;gap:8px;}
-.dt-pagination select{padding:5px 10px;border:1.5px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;}
+.dt-pagination select{padding:5px 10px;border:1.5px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;font-weight:600;}
+.dt-pagination .range-info{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-secondary);font-weight:600;}
 .dt-pagination .nav{display:flex;align-items:center;gap:4px;margin-left:auto;}
 .dt-pagination .nav button{border:1.5px solid var(--line);background:#fff;border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600;color:var(--ink-secondary);font-size:12px;transition:all .12s;}
 .dt-pagination .nav button:disabled{opacity:.35;cursor:default;}
 .dt-pagination .nav button:not(:disabled):hover{border-color:var(--accent);color:var(--accent-dark);background:var(--accent-tint2);}
-.dt-pagination .pageinfo{font-weight:600;color:var(--ink-secondary);white-space:nowrap;}
+.dt-pagination .pageinfo{font-weight:600;color:var(--ink-secondary);white-space:nowrap;font-family:'JetBrains Mono',monospace;font-size:11.5px;}
 
 .modal-overlay{position:fixed;inset:0;background:rgba(12,16,23,.55);display:flex;align-items:center;justify-content:center;z-index:50;animation:toast-in .18s cubic-bezier(.2,.8,.4,1);}
 .modal-card{width:420px;max-width:92vw;background:var(--surface);border-radius:12px;box-shadow:0 30px 70px -20px rgba(0,0,0,.5);overflow:hidden;max-height:88vh;display:flex;flex-direction:column;}
@@ -957,15 +969,15 @@ async function submitEntry(){
 
 /* ============================= DATA TABLES ============================= */
 const RESP1_COLS=[
-  {key:'timestamp',label:'Timestamp',width:170},{key:'date',label:'Date',width:115},{key:'code',label:'Code',pill:true,width:110},
-  {key:'userId',label:'User ID',width:110},{key:'software',label:'Software',width:100},{key:'name',label:'Name',width:300},
-  {key:'group',label:'Group Name',width:150},{key:'marginRMS',label:'Margin as per RMS',width:150},{key:'marginAllocated',label:'Margin Allocated on ID',width:170},{key:'loginName',label:'Login Name',width:140}
+  {key:'timestamp',label:'Timestamp',width:170,mono:true},{key:'date',label:'Date',width:115},{key:'code',label:'Code',pill:true,width:110},
+  {key:'userId',label:'User ID',width:110,mono:true},{key:'software',label:'Software',width:100},{key:'name',label:'Name',width:300},
+  {key:'group',label:'Group Name',width:150},{key:'marginRMS',label:'Margin as per RMS',width:150,mono:true},{key:'marginAllocated',label:'Margin Allocated on ID',width:170,mono:true},{key:'branchName',label:'Branch Name',width:130},{key:'loginName',label:'Login Name',width:140}
 ];
 const RESP2_COLS=[
-  {key:'timestamp',label:'Timestamp',width:170},{key:'date',label:'Date',width:115},{key:'group',label:'Group Name',width:220},{key:'margin',label:'Group Margin',width:150},{key:'loginName',label:'Login Name',width:140}
+  {key:'timestamp',label:'Timestamp',width:170,mono:true},{key:'date',label:'Date',width:115},{key:'group',label:'Group Name',width:220},{key:'margin',label:'Group Margin',width:150,mono:true},{key:'loginName',label:'Login Name',width:140}
 ];
 const MASTER_COLS=[
-  {key:'code',label:'Code',pill:true,width:120},{key:'userId',label:'User ID',width:130},{key:'software',label:'Software',width:110},{key:'name',label:'Name',width:340},{key:'group',label:'Group Name',width:180},{key:'branchName',label:'Branch Name',width:130},{key:'timestamp',label:'Timestamp',width:170},{key:'loginId',label:'Login ID',width:120}
+  {key:'code',label:'Code',pill:true,width:120},{key:'userId',label:'User ID',width:130,mono:true},{key:'software',label:'Software',width:110},{key:'name',label:'Name',width:340},{key:'group',label:'Group Name',width:180},{key:'branchName',label:'Branch Name',width:130},{key:'timestamp',label:'Timestamp',width:170,mono:true},{key:'loginId',label:'Login ID',width:120}
 ];
 const TABLE_DEFS={
   resp1Equity:{cols:RESP1_COLS,data:()=>S.respEquity},
@@ -978,8 +990,11 @@ const TABLE_DEFS={
 
 function renderDataTable(tableKey){
   const def=TABLE_DEFS[tableKey];const st=S.dt[tableKey];let rows=def.data().slice();
+  const totalUnfiltered=rows.length;
+
+  // Apply text filters (case-insensitive contains, AND logic across columns)
   Object.entries(st.filters).forEach(([k,v])=>{if(!v)return;rows=rows.filter(r=>String(r[k]??"").toLowerCase().includes(v.toLowerCase()));});
-  // Date range filters
+  // Apply date range filters
   Object.entries(st.dateFilters||{}).forEach(([k,df])=>{
     if(!df)return;
     const from=df.from?parseDT(df.from):null;
@@ -992,76 +1007,114 @@ function renderDataTable(tableKey){
       return true;
     });
   });
+
+  // Sorting
   if(st.sort){
-    const isDateCol=(st.sort==='timestamp'||st.sort==='date');
+    const isDateCol=isDateColumn(st.sort);
     rows.sort((a,b)=>{
       let x=a[st.sort],y=b[st.sort];
       if(isDateCol){
-        // Sort by real date/time, not text
         const dx=parseDT(x),dy=parseDT(y);
         const ex=(dx===null),ey=(dy===null);
-        if(ex&&ey)return 0; if(ex)return 1; if(ey)return -1; // blanks last
+        if(ex&&ey)return 0; if(ex)return 1; if(ey)return -1;
         return (dx-dy)*st.dir;
       }
+      // Numeric sort: if both values are valid numbers, compare numerically
       const nx=parseFloat(x),ny=parseFloat(y);
-      if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===String(x).trim()&&String(ny)===String(y).trim()){x=nx;y=ny;}
-      if(x<y)return-1*st.dir;if(x>y)return 1*st.dir;return 0;
+      if(!isNaN(nx)&&!isNaN(ny)&&String(nx)===String(x).trim()&&String(ny)===String(y).trim()){
+        return (nx-ny)*st.dir;
+      }
+      // Empty/null sorts to bottom
+      const sx=String(x??"").toLowerCase(), sy=String(y??"").toLowerCase();
+      if(!sx&&!sy)return 0; if(!sx)return 1; if(!sy)return -1;
+      if(sx<sy)return-1*st.dir;if(sx>sy)return 1*st.dir;return 0;
     });
   }
+
   const total=rows.length;const ps=st.pageSize;const tp=Math.max(1,Math.ceil(total/ps));
   if(st.page>tp)st.page=tp;if(st.page<1)st.page=1;
   const si=(st.page-1)*ps;const pageRows=rows.slice(si,si+ps);
   const visCols=def.cols.filter(c=>!st.hidden.has(c.key));
-  // S.No column — fixed reference counter, not sortable, always sequential
-  const snoTh=`<th style="width:60px;min-width:60px;max-width:60px;"><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">S.No</span></div></div></th>`;
+
+  // Check if any filter is active (for display)
+  const hasActiveFilters=Object.values(st.filters).some(v=>v)||Object.values(st.dateFilters||{}).some(v=>v);
+
+  // === S.No COLUMN (non-sortable, sequential, continues across pages) ===
+  const snoW=60;
+  const snoTh=`<th class="sno-col" style="width:${snoW}px;min-width:${snoW}px;max-width:${snoW}px;"><div class="th-inner"><div class="th-row"><span class="th-label no-sort">S.No</span></div></div></th>`;
+
+  // === DATA COLUMN HEADERS ===
   const hdr=snoTh+visCols.map(c=>{
-    const w=st.widths[c.key]||c.width||150;const si2=st.sort===c.key?(st.dir===1?'▲':'▼'):'';const fo=st.filterOpen===c.key;
+    const w=st.widths[c.key]||c.width||150;
+    const sortIcon=st.sort===c.key?(st.dir===1?'▲':'▼'):'';
+    const isFilterOpen=st.filterOpen===c.key;
     const isDate=isDateColumn(c.key);
+    const hasFilter=isDate?(st.dateFilters&&st.dateFilters[c.key]):!!st.filters[c.key];
+
+    // Filter row HTML (appears BELOW the label, label stays visible)
     let filterHtml='';
-    if(fo){
+    if(isFilterOpen){
       if(isDate){
-        const df=st.dateFilters[c.key]||{from:'',to:''};
+        const df=(st.dateFilters&&st.dateFilters[c.key])||{from:'',to:''};
         const dispVal=(df.from||df.to)?((df.from?fmtDR(new Date(df.from+'T00:00:00')):'…')+' – '+(df.to?fmtDR(new Date(df.to+'T00:00:00')):'…')):'';
         filterHtml=`<div class="th-filter th-date-filter"><input type="text" readonly data-action="open-daterange" data-table="${tableKey}" data-col="${c.key}" value="${esc(dispVal)}" placeholder="Select date range…">${dispVal?`<span class="dr-clear" data-action="clear-daterange" data-table="${tableKey}" data-col="${c.key}">✕</span>`:''}</div>`;
       } else {
-        filterHtml=`<div class="th-filter"><input type="text" placeholder="Filter…" data-action="filter" data-table="${tableKey}" data-col="${c.key}" value="${esc(st.filters[c.key]||'')}"></div>`;
+        filterHtml=`<div class="th-filter"><input type="text" placeholder="Filter ${esc(c.label)}…" data-action="filter" data-table="${tableKey}" data-col="${c.key}" value="${esc(st.filters[c.key]||'')}"></div>`;
       }
     }
+
     return `<th style="width:${w}px;min-width:${w}px;max-width:${w}px;" data-col="${c.key}">
-      <div class="th-inner"><div class="th-row">
-        <span class="th-label" data-action="sort" data-table="${tableKey}" data-col="${c.key}">${esc(c.label)}</span>
-        <span class="sort-ic">${si2}</span>
-        <span class="search-ic" data-action="togglesearch" data-table="${tableKey}" data-col="${c.key}">${isDate?'📅':'⌕'}</span>
+      <div class="th-inner">
+        <div class="th-row">
+          <span class="th-label" data-action="sort" data-table="${tableKey}" data-col="${c.key}">${esc(c.label)}</span>
+          <span class="sort-ic">${sortIcon}</span>
+          <span class="search-ic${hasFilter?' active':''}" data-action="togglesearch" data-table="${tableKey}" data-col="${c.key}">${isDate?'📅':'⌕'}</span>
+        </div>
+        ${filterHtml}
+        <div class="resize-handle" data-action="resize" data-table="${tableKey}" data-col="${c.key}"></div>
       </div>
-      ${filterHtml}
-      <div class="resize-handle" data-action="resize" data-table="${tableKey}" data-col="${c.key}"></div>
-      </div></th>`;
+    </th>`;
   }).join("");
-  const bod=pageRows.length?pageRows.map((r,idx)=>`<tr><td style="text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px;">${si+idx+1}</td>${visCols.map(c=>{const v=r[c.key]==null?"":r[c.key];return`<td>${c.pill&&v?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length+1}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
+
+  // === TABLE BODY ===
+  const bod=pageRows.length?pageRows.map((r,idx)=>{
+    const sno=si+idx+1; // Sequential S.No based on display position
+    return `<tr><td class="sno-cell">${sno}</td>${visCols.map(c=>{
+      const v=r[c.key]==null?"":r[c.key];
+      if(c.pill&&v) return `<td><span class="code-pill">${esc(v)}</span></td>`;
+      if(c.mono) return `<td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;">${esc(v)}</td>`;
+      return `<td>${esc(v)}</td>`;
+    }).join("")}</tr>`;
+  }).join(""):`<tr><td colspan="${visCols.length+1}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
+
+  // === PAGINATION INFO ===
   const rf=total===0?0:si+1;const rt=Math.min(si+ps,total);
+
+  // Master Add button logic
   const addPerm=tableKey==='masterEquity'?'masterEquityAdd':(tableKey==='masterCommodity'?'masterCommodityAdd':null);
   const canAdd=addPerm&&S.user&&S.user[addPerm];
+
   return `
     <div class="dt-toolbar">
-      <div class="count">${total} of ${def.data().length} rows</div>
-      <button class="btn btn-ghost" data-action="syncnow" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
+      <div class="count">${total} of ${totalUnfiltered} rows${hasActiveFilters?' (filtered)':''}</div>
+      <button class="btn btn-ghost" data-action="dt-refresh" data-table="${tableKey}" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
       ${canAdd?`<button class="btn btn-gold" data-action="open-master-add" data-seg="${tableKey==='masterCommodity'?'commodity':'equity'}" style="padding:7px 14px;">+ Add</button>`:""}
       <div class="dt-colmenu-wrap">
         <button class="btn btn-ghost" data-action="togglecolmenu" data-table="${tableKey}" style="padding:7px 14px;">Columns ▾</button>
-        ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / hide columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
+        ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / Hide Columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
       </div>
     </div>
     <div class="dt-table-wrap">
       <div class="dt-scroll"><table class="dt"><thead><tr>${hdr}</tr></thead><tbody>${bod}</tbody></table></div>
       <div class="dt-pagination">
         <div class="pp">Rows per page: <select data-action="pagesize" data-table="${tableKey}">${PAGE_SIZE_OPTIONS.map(n=>`<option value="${n}" ${st.pageSize===n?'selected':''}>${n}</option>`).join("")}</select></div>
-        <div>${total===0?'0':`${rf}–${rt}`} of ${total}</div>
+        <div class="range-info">${total===0?'0 rows':`${rf}–${rt} of ${total}`}</div>
         <div class="nav">
-          <button data-action="pagefirst" data-table="${tableKey}" ${st.page<=1?'disabled':''}>«</button>
-          <button data-action="pageprev" data-table="${tableKey}" ${st.page<=1?'disabled':''}>‹</button>
+          <button data-action="pagefirst" data-table="${tableKey}" ${st.page<=1?'disabled':''}>« First</button>
+          <button data-action="pageprev" data-table="${tableKey}" ${st.page<=1?'disabled':''}>‹ Prev</button>
           <span class="pageinfo">${st.page} / ${tp}</span>
-          <button data-action="pagenext" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>›</button>
-          <button data-action="pagelast" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>»</button>
+          <button data-action="pagenext" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>Next ›</button>
+          <button data-action="pagelast" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>Last »</button>
         </div>
       </div>
     </div>`;
@@ -1502,6 +1555,14 @@ document.addEventListener('click',e=>{
   if(a==='del-b'){delRowB(parseInt(el.getAttribute('data-i'),10));return;}
   if(a==='submit-entry'){submitEntry();return;}
   if(a==='sort'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.sort===c)st.dir*=-1;else{st.sort=c;st.dir=1;}st.page=1;render();return;}
+  if(a==='dt-refresh'){
+    // Refresh: clear ALL filters for this table, reset to page 1, then pull fresh data
+    const t=el.getAttribute('data-table');
+    if(t&&S.dt[t]){
+      S.dt[t].filters={};S.dt[t].dateFilters={};S.dt[t].filterOpen=null;S.dt[t].page=1;
+    }
+    refreshData();return;
+  }
   if(a==='pagefirst'){S.dt[el.getAttribute('data-table')].page=1;render();return;}
   if(a==='pageprev'){const st=S.dt[el.getAttribute('data-table')];st.page=Math.max(1,st.page-1);render();return;}
   if(a==='pagenext'){S.dt[el.getAttribute('data-table')].page++;render();return;}
