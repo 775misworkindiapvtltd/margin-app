@@ -284,10 +284,19 @@ async function loadAll(){
 }
 
 // Called after successful login to load the heavy data (Master, Responses) in background.
+// Only fetches sheets the user actually has permission to view (faster for limited-access users).
 async function loadHeavyData(){
   S.syncing=true;render();
   try{
-    applyBootstrap(await runServer('getBootstrapData',true));
+    // Pass user permissions so the server only reads needed sheets
+    const perms=S.user?{
+      equityEntry:S.user.equityEntry, commodityEntry:S.user.commodityEntry,
+      masterEquity:S.user.masterEquity, masterCommodity:S.user.masterCommodity,
+      masterEquityAdd:S.user.masterEquityAdd, masterCommodityAdd:S.user.masterCommodityAdd,
+      resp1Equity:S.user.resp1Equity, resp1Commodity:S.user.resp1Commodity,
+      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity
+    }:null;
+    applyBootstrap(await runServer('getBootstrapData',perms));
     // Re-sync user permissions from the full bootstrap (may include latest changes)
     if(S.user){
       const f=S.users.find(u=>u.id.toLowerCase()===S.user.id.toLowerCase());
@@ -301,9 +310,15 @@ async function loadHeavyData(){
 async function refreshData(){
   S.syncing=true;render();
   try{
-    // forceFresh=true bypasses the server's 60s bootstrap cache — "Refresh from Sheet"
-    // should always mean "give me the LATEST sheet data right now", not a stale copy.
-    applyBootstrap(await runServer('getBootstrapData',true));
+    // Pass user permissions so the server only reads needed sheets (same as loadHeavyData)
+    const perms=S.user?{
+      equityEntry:S.user.equityEntry, commodityEntry:S.user.commodityEntry,
+      masterEquity:S.user.masterEquity, masterCommodity:S.user.masterCommodity,
+      masterEquityAdd:S.user.masterEquityAdd, masterCommodityAdd:S.user.masterCommodityAdd,
+      resp1Equity:S.user.resp1Equity, resp1Commodity:S.user.resp1Commodity,
+      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity
+    }:null;
+    applyBootstrap(await runServer('getBootstrapData',perms));
     if(S.user){
       // Pull THIS user's permissions live/uncached too, so a just-added YES (e.g. Master
       // Add Entry) shows up immediately on Refresh instead of waiting for cache to expire.

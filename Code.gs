@@ -152,22 +152,26 @@ function getLoginData() {
   return { users: usersRaw.map(mapUser_) };
 }
 
-function getBootstrapData(forceFresh) {
-  var cache = CacheService.getScriptCache();
-  if (!forceFresh) {
-    var cached = cache.get('bootstrap_v4');
-    if (cached) { try { return JSON.parse(cached); } catch (e) {} }
-  }
-
+function getBootstrapData(perms) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
+  // perms object tells us which sheets this user actually needs.
+  // If no perms passed (e.g. from Refresh), load everything.
+  var loadAll = !perms;
+  var needMasterEq    = loadAll || perms.equityEntry || perms.masterEquity || perms.masterEquityAdd;
+  var needMasterComm  = loadAll || perms.commodityEntry || perms.masterCommodity || perms.masterCommodityAdd;
+  var needRespEq      = loadAll || perms.resp1Equity;
+  var needRespComm    = loadAll || perms.resp1Commodity;
+  var needResp2Eq     = loadAll || perms.resp2Equity;
+  var needResp2Comm   = loadAll || perms.resp2Commodity;
+
   var result = {
-    masterEquity:    mapMaster_(sheetToObjects_(SHEETS.masterEquity)),
-    masterCommodity: mapMaster_(sheetToObjects_(SHEETS.masterComm)),
-    respEquity:      mapResp1_(sheetToObjects_(SHEETS.respEquity)),
-    respCommodity:   mapResp1_(sheetToObjects_(SHEETS.respComm)),
-    resp2Equity:     mapResp2_(sheetToObjects_(SHEETS.resp2Equity)),
-    resp2Commodity:  mapResp2_(sheetToObjects_(SHEETS.resp2Comm)),
+    masterEquity:    needMasterEq   ? mapMaster_(sheetToObjects_(SHEETS.masterEquity)) : [],
+    masterCommodity: needMasterComm ? mapMaster_(sheetToObjects_(SHEETS.masterComm))   : [],
+    respEquity:      needRespEq    ? mapResp1_(sheetToObjects_(SHEETS.respEquity))     : [],
+    respCommodity:   needRespComm  ? mapResp1_(sheetToObjects_(SHEETS.respComm))       : [],
+    resp2Equity:     needResp2Eq   ? mapResp2_(sheetToObjects_(SHEETS.resp2Equity))    : [],
+    resp2Commodity:  needResp2Comm ? mapResp2_(sheetToObjects_(SHEETS.resp2Comm))      : [],
     users:           sheetToObjects_(SHEETS.login).map(mapUser_),
     missingSheets:   []
   };
@@ -179,7 +183,6 @@ function getBootstrapData(forceFresh) {
     if (!have[SHEETS[k].toUpperCase()]) result.missingSheets.push(SHEETS[k]);
   });
 
-  try { cache.put('bootstrap_v4', JSON.stringify(result), 60); } catch (e) {}
   return result;
 }
 
@@ -219,7 +222,6 @@ function addMasterEntry(payload) {
     var now = new Date();
     sh.getRange(sh.getLastRow() + 1, 1, 1, 8).setValues([[code, userId, software, name, group, branchName, now, payload.loginId || '']]);
 
-    CacheService.getScriptCache().remove('bootstrap_v4');
     return {
       status: 'ok', segment: seg,
       row: { code: code, userId: userId, software: software, name: name, group: group, branchName: branchName, timestamp: fmtTimestamp_(now), loginId: payload.loginId || '' }
@@ -267,7 +269,6 @@ function saveEntries(payload) {
       savedB = rowsB.length;
     }
 
-    CacheService.getScriptCache().remove('bootstrap_v4');
     return { status: 'ok', savedA: savedA, savedB: savedB, segment: seg };
   } catch (err) {
     return { status: 'error', message: err.message };
