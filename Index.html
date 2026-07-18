@@ -264,9 +264,13 @@ table.rpt-table .rpt-td-data{padding:4px 6px;border-right:1px solid var(--line-l
 table.rpt-table .rpt-td-num{padding:4px 6px;border-right:1px solid var(--line-light);font-family:'JetBrains Mono',monospace;font-size:10.5px;text-align:right;line-height:1.6;}
 table.rpt-table .rpt-month-border{border-left:3px solid var(--accent) !important;}
 table.rpt-table .rpt-month-end{border-right:3px solid var(--accent) !important;}
+table.rpt-table .rpt-group-end{border-right:3px solid var(--accent) !important;}
 table.rpt-table .rpt-th-fixed .rpt-resize{position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:5;}
 table.rpt-table .rpt-th-fixed .rpt-resize:hover{background:rgba(180,134,43,.5);}
 table.rpt-table .rpt-th-fixed{position:relative;}
+table.rpt-table .rpt-sub-hdr span{padding:4px 6px;font-size:8.5px;font-weight:600;color:#9A948A;text-align:center;border-right:1px solid #2A2518;cursor:pointer;user-select:none;}
+table.rpt-table .rpt-sub-hdr span:hover{color:var(--accent);}
+table.rpt-table .rpt-sub-hdr span:last-child{border-right:none;}
 table.rpt-table .rpt-empty{padding:40px;text-align:center;color:var(--muted);font-size:13px;}
 </style>
 </head>
@@ -296,7 +300,7 @@ let S = {
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
   masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
-  report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all',widths:{}},
+  report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all',widths:{},monthSort:null,monthSortDir:1},
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
 try{ const rw=localStorage.getItem('margin_rpt_widths'); if(rw) S.report.widths=JSON.parse(rw); }catch(e){}
@@ -1061,13 +1065,17 @@ function renderReport(seg){
   }
 
   // Fixed columns header with sort icons + inline search + resize handles
-  const RPT_FIXED_COLS=[{k:'code',l:'Code',def:90},{k:'userId',l:'User ID',def:90},{k:'software',l:'Software',def:80},{k:'name',l:'Name',def:200},{k:'group',l:'Group Name',def:120}];
+  const RPT_FIXED_COLS=[{k:'code',l:'Code',def:90},{k:'userId',l:'User ID',def:90},{k:'software',l:'Software',def:80},{k:'name',l:'Name',def:200},{k:'group',l:'Group Name',def:120,last:true}];
   const fixedHdr=`<th class="rpt-th-fixed" style="cursor:default;width:32px;min-width:32px;">S.No</th>`+RPT_FIXED_COLS.map(c=>{
     const si=R.sort===c.k?(R.sortDir===1?'▲':'▼'):'';
     const w=R.widths[c.k]||c.def;
-    return `<th class="rpt-th-fixed" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;min-width:${w}px;max-width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
+    return `<th class="rpt-th-fixed${c.last?' rpt-group-end':''}" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;min-width:${w}px;max-width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
   }).join('');
-  const monthHdr=months.map((mo,mi)=>`<th class="rpt-th-month${mi>0?' rpt-month-border':''}" colspan="3"><div class="rpt-month-label">${mo.label}</div><div class="rpt-sub-hdr"><span>Date</span><span>Margin RMS</span><span>Margin ON ID</span></div></th>`).join('');
+  const monthHdr=months.map((mo,mi)=>{
+    const rmsSort=R.monthSort===`rms_${mi}`?(R.monthSortDir===1?'▲':'▼'):'';
+    const allocSort=R.monthSort===`alloc_${mi}`?(R.monthSortDir===1?'▲':'▼'):'';
+    return `<th class="rpt-th-month${mi>0?' rpt-month-border':''}" colspan="3"><div class="rpt-month-label">${mo.label}</div><div class="rpt-sub-hdr"><span>Date</span><span data-action="rpt-sort-month" data-col="rms_${mi}">Margin RMS ${rmsSort}</span><span data-action="rpt-sort-month" data-col="alloc_${mi}">Margin ON ID ${allocSort}</span></div></th>`;
+  }).join('');
 
   // Per-column filter
   RPT_FIXED_COLS.forEach(c=>{
@@ -1075,9 +1083,30 @@ function renderReport(seg){
     if(fv){const q=fv.toLowerCase();groupList=groupList.filter(g=>(g[c.k]||'').toLowerCase().includes(q));}
   });
 
+  // Month-column sort (Margin RMS / Margin ON ID within a specific month)
+  if(R.monthSort){
+    const parts=R.monthSort.split('_');const type=parts[0];const mi=parseInt(parts[1],10);
+    const mo=months[mi];
+    if(mo){
+      const field=type==='rms'?'marginRMS':'marginAllocated';
+      groupList.sort((a,b)=>{
+        const getVal=g=>{
+          const mEntries=g.entries.filter(e=>{const d=parseDT(e.timestamp)||parseDT(e.date);if(!d)return false;const dt=new Date(d);return dt.getMonth()===mo.m&&dt.getFullYear()===mo.y;});
+          if(!mEntries.length)return null;
+          // Sum all values in that month for sorting
+          let sum=0;mEntries.forEach(e=>{const v=parseFloat(e[field]);if(!isNaN(v))sum+=v;});
+          return sum;
+        };
+        const va=getVal(a),vb=getVal(b);
+        if(va===null&&vb===null)return 0;if(va===null)return 1;if(vb===null)return -1;
+        return (va-vb)*R.monthSortDir;
+      });
+    }
+  }
+
   // Build body rows
   const bodyRows=groupList.map((g,idx)=>{
-    const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td">${esc(g.group)}</td>`;
+    const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td rpt-group-end">${esc(g.group)}</td>`;
 
     const monthCells=months.map((mo,mi)=>{
       const mEntries=g.entries.filter(e=>{
@@ -1089,7 +1118,7 @@ function renderReport(seg){
       const dateCol=mEntries.map(e=>esc(e.date||'')).join('<br>');
       const rmsCol=mEntries.map(e=>esc(String(e.marginRMS||''))).join('<br>');
       const allocCol=mEntries.map(e=>esc(String(e.marginAllocated||''))).join('<br>');
-      return `<td class="rpt-td rpt-td-data${borderCls}">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num rpt-month-end">${allocCol}</td>`;
+      return `<td class="rpt-td rpt-td-data${borderCls}">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num">${allocCol}</td>`;
     }).join('');
 
     return `<tr>${fixedCells}${monthCells}</tr>`;
@@ -1411,7 +1440,8 @@ document.addEventListener('click',e=>{
     if(el===e.target)closeMasterAdd();return;
   }
   if(a==='save-master-add'){saveMasterAdd();return;}
-  if(a==='rpt-sort'){const c=el.getAttribute('data-col');if(S.report.sort===c)S.report.sortDir*=-1;else{S.report.sort=c;S.report.sortDir=1;}render();return;}
+  if(a==='rpt-sort'){const c=el.getAttribute('data-col');if(S.report.sort===c)S.report.sortDir*=-1;else{S.report.sort=c;S.report.sortDir=1;}S.report.monthSort=null;render();return;}
+  if(a==='rpt-sort-month'){const c=el.getAttribute('data-col');if(S.report.monthSort===c)S.report.monthSortDir*=-1;else{S.report.monthSort=c;S.report.monthSortDir=1;}S.report.sort=null;render();return;}
   if(a==='rpt-filter'){S.report.filter=el.getAttribute('data-val');render();return;}
   if(a==='open-daterange'){openDateRange(el.getAttribute('data-table'),el.getAttribute('data-col'));return;}
   if(a==='clear-daterange'){
