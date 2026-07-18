@@ -242,10 +242,30 @@ function applyBootstrap(data){
 }
 
 async function loadAll(){
+  // FAST PATH: only fetch LOGIN PAGE users (~1s) so the login form appears instantly.
+  // Heavy data (Master, Responses) loads AFTER login to avoid the 5-10s loading spinner.
   S.ready=false;render();
-  try{ applyBootstrap(await runServer('getBootstrapData')); S.loadError=""; }
-  catch(err){ S.loadError=err.message; }
-  S.ready=true;freshRows();render();startClock();
+  try{
+    const loginData=await runServer('getLoginData');
+    S.users=loginData.users||[];
+    S.loadError="";
+  }catch(err){ S.loadError=err.message; }
+  S.ready=true;render();startClock();
+}
+
+// Called after successful login to load the heavy data (Master, Responses) in background.
+async function loadHeavyData(){
+  S.syncing=true;render();
+  try{
+    applyBootstrap(await runServer('getBootstrapData',true));
+    // Re-sync user permissions from the full bootstrap (may include latest changes)
+    if(S.user){
+      const f=S.users.find(u=>u.id.toLowerCase()===S.user.id.toLowerCase());
+      if(f)S.user=Object.assign({},S.user,f);
+    }
+    S.loadError="";
+  }catch(err){ showToast("Data load error: "+err.message,true); }
+  S.syncing=false;freshRows();render();
 }
 
 async function refreshData(){
@@ -465,10 +485,10 @@ async function doLogin(id,pw){
   const u=S.users.find(x=>x.id.toLowerCase()===id.trim().toLowerCase()&&String(x.password)===pw);
   if(!u){S.loginError="Invalid user ID or password.";render();return;}
   S.user=u;S.loginError="";S.sidebarOpen=false;S.logoutAt=nextLogoutTs();S.page=firstAllowedPage();render();
-  // The bootstrap data (incl. this user's permissions) can be up to 60s stale because it's
-  // cached script-wide. Immediately pull this user's permissions LIVE from the sheet (no
-  // cache) so a just-added YES (e.g. Master Add Entry permission) takes effect on login,
-  // not up to a minute later.
+  // Load heavy data (Master, Responses) in background — login was instant,
+  // now fetch the bulk sheet data while the user sees the dashboard loading.
+  await loadHeavyData();
+  // Re-pull live permissions (in case bootstrap cache was stale)
   try{
     const fresh=await runServer('getUserPermissions',S.user.id);
     if(fresh){
@@ -975,7 +995,10 @@ function render(){
   if(S.loadError){app.innerHTML=`<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="login-eyebrow">Setup</div><h1>Sheet load failed</h1></div><div class="login-body"><div class="login-error">${esc(S.loadError)}</div><div class="login-hint">1) Open via the Apps Script <b>/exec</b> URL. 2) Required tabs: LOGIN PAGE, MASTER EQUITY, MASTER COMODDITY, RESPONSES EQUITY, RESPONSES COMODDITY, RESPONSES 2 EQUITY, RESPONSES 2 COMODDITY. 3) Deploy access = "Anyone".</div><button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="syncnow">Retry</button></div></div></div>`;return;}
   if(!S.user){app.innerHTML=renderLogin();return;}
   let inner="";
-  if(S.page==='entryEquity')inner=renderEntry('equity');
+  if(S.syncing && !S.masterEquity.length && !S.respEquity.length){
+    // Post-login: heavy data is still loading in background
+    inner=`<div class="empty-state" style="padding-top:80px;"><div class="spinner" style="margin:0 auto 16px;"></div><div class="big">Loading data…</div><div style="margin-top:6px;">Aapka data background mein load ho raha hai, kuch seconds lagenge.</div></div>`;
+  } else if(S.page==='entryEquity')inner=renderEntry('equity');
   else if(S.page==='entryCommodity')inner=renderEntry('commodity');
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;

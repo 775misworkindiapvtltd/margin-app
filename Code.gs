@@ -98,11 +98,20 @@ function mapResp2_(rows) {
     return { timestamp: fmtTimestamp_(r['TIMESTAMP']), date: fmtDateOnly_(r['SELECT DATE']), group: r['GROUP NAME'] || '', margin: fmtValue_(r['GROUP MARGIN']), loginName: r['LOGIN NAME'] || '' };
   });
 }
-// Reads a header value tolerating a couple of alternate spellings (sheet owner has used
-// both "MASTER..." and "MATER..." across tabs). Returns the first header that is present.
+// Reads a header value tolerating alternate spellings. The comparison is case-insensitive
+// and whitespace-normalized so minor differences (extra space, different case) are handled.
 function pick_(r, names) {
+  // First: try exact match (fastest path)
   for (var i = 0; i < names.length; i++) {
     if (Object.prototype.hasOwnProperty.call(r, names[i])) return r[names[i]];
+  }
+  // Fallback: case-insensitive + whitespace-normalized fuzzy match against all keys in r
+  var keys = Object.keys(r);
+  for (var i = 0; i < names.length; i++) {
+    var target = names[i].replace(/\s+/g, ' ').trim().toUpperCase();
+    for (var j = 0; j < keys.length; j++) {
+      if (keys[j].replace(/\s+/g, ' ').trim().toUpperCase() === target) return r[keys[j]];
+    }
   }
   return '';
 }
@@ -110,16 +119,16 @@ function pick_(r, names) {
 function mapUser_(r) {
   return {
     name: r['NAME'] || '', id: String(r['ID'] || '').trim(), password: String(r['PASSWORD'] || '').trim(),
-    equityEntry:     isYes_(r['EQUITY ENTRY']),
-    commodityEntry:  isYes_(r['COMODDITY ENTRY']),
-    masterEquity:    isYes_(r['MASTER EQUITY']),
-    masterCommodity: isYes_(r['MASTER COMODDITY']),
-    resp1Equity:     isYes_(r['RESPONSES EQUITY']),
-    resp1Commodity:  isYes_(r['RESPONSES COMODDITY']),
-    resp2Equity:     isYes_(r['RESPONSES 2 EQUITY']),
-    resp2Commodity:  isYes_(r['RESPONSES 2 COMODDITY']),
+    equityEntry:     isYes_(pick_(r, ['EQUITY ENTRY'])),
+    commodityEntry:  isYes_(pick_(r, ['COMODDITY ENTRY', 'COMMODITY ENTRY'])),
+    masterEquity:    isYes_(pick_(r, ['MASTER EQUITY'])),
+    masterCommodity: isYes_(pick_(r, ['MASTER COMODDITY', 'MASTER COMMODITY'])),
+    resp1Equity:     isYes_(pick_(r, ['RESPONSES EQUITY'])),
+    resp1Commodity:  isYes_(pick_(r, ['RESPONSES COMODDITY', 'RESPONSES COMMODITY'])),
+    resp2Equity:     isYes_(pick_(r, ['RESPONSES 2 EQUITY'])),
+    resp2Commodity:  isYes_(pick_(r, ['RESPONSES 2 COMODDITY', 'RESPONSES 2 COMMODITY'])),
     masterEquityAdd:    isYes_(pick_(r, ['MASTER EQUITY ADD ENTRY', 'MATER EQUITY ADD ENTRY'])),
-    masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY']))
+    masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY', 'MASTER COMMODITY ADD ENTRY', 'MATER COMMODITY ADD ENTRY']))
   };
 }
 
@@ -131,6 +140,16 @@ function getUserPermissions(id) {
   var u = mapUser_(match);
   delete u.password;
   return u;
+}
+
+/**
+ * Lightweight login-only data: reads only the LOGIN PAGE sheet (fast, <1s).
+ * Called on initial page load so the login screen appears instantly while heavy
+ * data (Master/Responses) loads later after successful login.
+ */
+function getLoginData() {
+  var usersRaw = sheetToObjects_(SHEETS.login);
+  return { users: usersRaw.map(mapUser_) };
 }
 
 function getBootstrapData(forceFresh) {
