@@ -295,6 +295,13 @@ table.dt tbody tr:hover td.sno-cell{background:var(--accent-tint);}
 .saving-overlay .saving-box{background:var(--surface);border-radius:12px;padding:24px 36px;box-shadow:0 20px 50px rgba(0,0,0,.25);display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;color:var(--ink);}
 .neg-err{display:none;font-size:9.5px;color:var(--danger);font-weight:600;margin-top:2px;white-space:nowrap;}
 
+.mat-top-field{display:flex;flex-direction:column;gap:4px;min-width:160px;max-width:240px;flex:1;}
+.mat-top-field label{font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.mat-top-field input{padding:7px 10px;border:1.5px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font-size:12px;transition:border .15s;}
+.mat-top-field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-tint);}
+html.dark .mat-top-field input{background:#1A1F28;border-color:#2A2F38;color:var(--ink);}
+html.dark .mat-top-field input:focus{background:#0F141B;border-color:var(--accent);}
+
 .rpt-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0;flex:none;}
 .rpt-month-selector{display:flex;align-items:center;gap:6px;}
 .rpt-month-selector label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
@@ -364,12 +371,14 @@ let S = {
   ready:false, loadError:"", user:null, page:null, syncing:false, sidebarOpen:false,
   masterEquity:[], masterCommodity:[],
   respEquity:[], respCommodity:[], resp2Equity:[], resp2Commodity:[],
+  matRecResp:[],
   users:[], missingSheets:[],
   entry:{ equity:freshSeg(), commodity:freshSeg() },
   toast:null, loginError:"",
-  dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
+  dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState(), matRecResp:dtState() },
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
   masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
+  matRecEntry:null, // Material Received Add form state
   report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all',widths:{},monthSort:null,monthSortDir:1},
   darkMode:false, fontSize:100,
 };
@@ -396,6 +405,7 @@ function applyBootstrap(data){
   S.masterEquity=data.masterEquity||[]; S.masterCommodity=data.masterCommodity||[];
   S.respEquity=data.respEquity||[]; S.respCommodity=data.respCommodity||[];
   S.resp2Equity=data.resp2Equity||[]; S.resp2Commodity=data.resp2Commodity||[];
+  S.matRecResp=data.matRecResp||[];
   S.users=data.users||[]; S.missingSheets=data.missingSheets||[];
 }
 
@@ -423,7 +433,8 @@ async function loadHeavyData(){
       masterEquityAdd:S.user.masterEquityAdd, masterCommodityAdd:S.user.masterCommodityAdd,
       resp1Equity:S.user.resp1Equity, resp1Commodity:S.user.resp1Commodity,
       resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity,
-      report:S.user.report
+      report:S.user.report,
+      matRecView:S.user.matRecView, matRecAdd:S.user.matRecAdd
     }:null;
     applyBootstrap(await runServer('getBootstrapData',perms));
     // Re-sync user permissions from the full bootstrap (may include latest changes)
@@ -445,7 +456,8 @@ async function refreshData(){
       masterEquity:S.user.masterEquity, masterCommodity:S.user.masterCommodity,
       masterEquityAdd:S.user.masterEquityAdd, masterCommodityAdd:S.user.masterCommodityAdd,
       resp1Equity:S.user.resp1Equity, resp1Commodity:S.user.resp1Commodity,
-      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity
+      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity,
+      matRecView:S.user.matRecView, matRecAdd:S.user.matRecAdd
     }:null;
     applyBootstrap(await runServer('getBootstrapData',perms));
     if(S.user){
@@ -707,6 +719,7 @@ const NAV_ITEMS=[
   {key:'masterCommodity',label:'Master · Commodity',    group:'Master',      perm:'masterCommodity'},
   {key:'reportEquity',   label:'Report · Equity',       group:'Report',      perm:'report'},
   {key:'reportCommodity',label:'Report · Commodity',    group:'Report',      perm:'report'},
+  {key:'matRecView',     label:'Material Received',     group:'Material',    perm:'matRecView'},
 ];
 const PAGE_TITLES={
   entryEquity:'Equity — Margin Entry', entryCommodity:'Commodity — Margin Entry',
@@ -714,6 +727,7 @@ const PAGE_TITLES={
   resp2Equity:'Response 2', resp2Commodity:'Response 2',
   masterEquity:'Master Data', masterCommodity:'Master Data',
   reportEquity:'Report', reportCommodity:'Report',
+  matRecView:'Material Received', matRecAdd:'Material Received — Add Entry',
 };
 function segOfPage(k){ return /Commodity$/.test(k)?'commodity':(/Equity$/.test(k)?'equity':null); }
 
@@ -986,7 +1000,40 @@ const TABLE_DEFS={
   resp2Commodity:{cols:RESP2_COLS,data:()=>S.resp2Commodity},
   masterEquity:{cols:MASTER_COLS,data:()=>S.masterEquity},
   masterCommodity:{cols:MASTER_COLS,data:()=>S.masterCommodity},
+  matRecResp:{cols:MAT_REC_COLS,data:()=>S.matRecResp},
 };
+
+const MAT_REC_COLS=[
+  {key:'timestamp',label:'Timestamp',width:160,mono:true},
+  {key:'poNo',label:'PO No',width:100,pill:true},
+  {key:'vendorName',label:'Vendor Name',width:180},
+  {key:'invQty',label:'INV QTY',width:80,mono:true},
+  {key:'dueDate',label:'Due Date',width:110},
+  {key:'bandel',label:'Bandel',width:80},
+  {key:'changeBrand',label:'Change Brand',width:110},
+  {key:'brand',label:'Brand',width:110},
+  {key:'salesOrderId',label:'Sales Order ID',width:120,mono:true},
+  {key:'itemName',label:'Item Name',width:220},
+  {key:'pendingQty',label:'Pending QTY',width:100,mono:true},
+  {key:'recQty',label:'REC QTY',width:90,mono:true},
+  {key:'cancelQty',label:'Cancel QTY',width:90,mono:true},
+  {key:'poRate',label:'PO Rate',width:90,mono:true},
+  {key:'size',label:'Size',width:80},
+  {key:'unit',label:'Unit',width:70},
+  {key:'invoiceRate',label:'Invoice Rate',width:100,mono:true},
+  {key:'inwardBatchNo',label:'Inward Batch No',width:130,mono:true},
+  {key:'grossWeight',label:'Gross Weight',width:110,mono:true},
+  {key:'remarks',label:'Remarks',width:180},
+  {key:'newUniqueNo',label:'New Unique No',width:130,mono:true},
+  {key:'outwardBatchNo',label:'Outward Batch No',width:130,mono:true},
+  {key:'invoiceNumber',label:'Invoice No',width:120},
+  {key:'invoiceDate',label:'Invoice Date',width:110},
+  {key:'addressGst',label:'Address & GST',width:150},
+  {key:'ewayBill',label:'Eway Bill',width:120},
+  {key:'lrBillVerified',label:'LR Bill Verified',width:120},
+  {key:'status',label:'Status',width:90},
+  {key:'loginName',label:'Login Name',width:120},
+];
 
 function renderDataTable(tableKey){
   const def=TABLE_DEFS[tableKey];const st=S.dt[tableKey];let rows=def.data().slice();
@@ -1093,12 +1140,15 @@ function renderDataTable(tableKey){
   // Master Add button logic
   const addPerm=tableKey==='masterEquity'?'masterEquityAdd':(tableKey==='masterCommodity'?'masterCommodityAdd':null);
   const canAdd=addPerm&&S.user&&S.user[addPerm];
+  // Material Received Add button
+  const canAddMatRec=tableKey==='matRecResp'&&S.user&&S.user.matRecAdd;
 
   return `
     <div class="dt-toolbar">
       <div class="count">${total} of ${totalUnfiltered} rows${hasActiveFilters?' (filtered)':''}</div>
       <button class="btn btn-ghost" data-action="dt-refresh" data-table="${tableKey}" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
       ${canAdd?`<button class="btn btn-gold" data-action="open-master-add" data-seg="${tableKey==='masterCommodity'?'commodity':'equity'}" style="padding:7px 14px;">+ Add</button>`:""}
+      ${canAddMatRec?`<button class="btn btn-gold" data-action="open-matrec-add" style="padding:7px 14px;">+ Add</button>`:""}
       <div class="dt-colmenu-wrap">
         <button class="btn btn-ghost" data-action="togglecolmenu" data-table="${tableKey}" style="padding:7px 14px;">Columns ▾</button>
         ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / Hide Columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
@@ -1365,6 +1415,119 @@ async function saveMasterAdd(){
   }catch(err){hideSavingOverlay();M.saving=false;M.error=err.message;rerenderModal();}
 }
 
+/* ============================= MATERIAL RECEIVED ADD FORM ============================= */
+const MAT_REC_MIN_ROWS=20;
+function freshMatRecEntry(){
+  return {
+    topFields:{poNo:'',invoiceUpload:'',vendorName:'',pendingQtyTop:'',invQty:'',dueDate:'',bandel:'',addressGst:'',ewayBill:'',lrBillVerified:'',invoiceNumber:'',invoiceDate:'',ewayBillImage:'',lrImage:''},
+    rows:Array.from({length:MAT_REC_MIN_ROWS},()=>({changeBrand:'',brand:'',salesOrderId:'',itemName:'',pendingQty:'',recQty:'',cancelQty:'',poRate:'',size:'',unit:'',invoiceRate:'',inwardBatchNo:'',grossWeight:'',remarks:'',newUniqueNo:'',outwardBatchNo:'',matRecImage:''})),
+    showErrors:false
+  };
+}
+function openMatRecAdd(){S.matRecEntry=freshMatRecEntry();S.page='matRecAdd';render();}
+function closeMatRecAdd(){S.matRecEntry=null;S.page='matRecView';render();}
+
+function initMatRecDatePickers(){
+  if(typeof flatpickr==='undefined')return;
+  document.querySelectorAll('[data-matdate]').forEach(el=>{
+    const key=el.getAttribute('data-matdate');
+    flatpickr(el,{
+      dateFormat:'d-M-Y',allowInput:true,disableMobile:true,
+      defaultDate:S.matRecEntry&&S.matRecEntry.topFields[key]?S.matRecEntry.topFields[key]:null,
+      onChange:function(sel,ds){if(S.matRecEntry)S.matRecEntry.topFields[key]=ds;}
+    });
+  });
+}
+
+function renderMatRecAdd(){
+  const E=S.matRecEntry;if(!E)return'';
+  const T=E.topFields;
+  const topFields=[
+    {k:'poNo',label:'PO No',type:'text'},{k:'invoiceUpload',label:'Invoice Upload',type:'text'},
+    {k:'vendorName',label:'Vendor Name',type:'text'},{k:'pendingQtyTop',label:'Pending QTY',type:'number'},
+    {k:'invQty',label:'INV QTY',type:'number'},{k:'dueDate',label:'Due Date',type:'date'},
+    {k:'bandel',label:'Bandel',type:'text'},{k:'addressGst',label:'Address & GST Number Verification',type:'text'},
+    {k:'ewayBill',label:'Eway Bill Verification',type:'text'},{k:'lrBillVerified',label:'LR Bill Verified',type:'text'},
+    {k:'invoiceNumber',label:'Invoice Number',type:'text'},{k:'invoiceDate',label:'Invoice Date',type:'date'},
+    {k:'ewayBillImage',label:'Eway Bill Verification Image',type:'text'},{k:'lrImage',label:'LR Image',type:'text'},
+  ];
+  const topHtml=topFields.map(f=>{
+    const v=T[f.k]||'';
+    const inputType=f.type==='date'?'text':f.type;
+    const cls=f.type==='number'?'num':'';
+    const ph=f.type==='date'?'DD-MMM-YYYY':'';
+    return `<div class="mat-top-field"><label>${esc(f.label)}</label><input class="${cls}" type="${inputType}" data-mattop="${f.k}" value="${esc(v)}" placeholder="${ph}" autocomplete="off"${f.type==='date'?' data-matdate="'+f.k+'"':''}></div>`;
+  }).join('');
+
+  const tblCols=[
+    {k:'changeBrand',label:'Change Brand',w:100},{k:'brand',label:'Brand',w:90},
+    {k:'salesOrderId',label:'Sales Order ID',w:110},{k:'itemName',label:'Item Name',w:200},
+    {k:'pendingQty',label:'Pending QTY',w:90,num:true},{k:'recQty',label:'REC QTY',w:80,num:true},
+    {k:'cancelQty',label:'Cancel QTY',w:90,num:true},{k:'poRate',label:'PO Rate',w:80,num:true},
+    {k:'size',label:'Size',w:70},{k:'unit',label:'Unit',w:60},
+    {k:'invoiceRate',label:'Invoice Rate',w:95,num:true},{k:'inwardBatchNo',label:'Inward Batch No',w:120},
+    {k:'grossWeight',label:'Gross Weight',w:100,num:true},{k:'remarks',label:'Remarks',w:150},
+    {k:'newUniqueNo',label:'New Unique No',w:120},{k:'outwardBatchNo',label:'Outward Batch No',w:120},
+    {k:'matRecImage',label:'Mat Rec Image',w:120},
+  ];
+  const hdr=`<th class="blk-a" style="width:28px;min-width:28px;">#</th>`+tblCols.map(c=>`<th class="blk-a" style="width:${c.w}px;min-width:${c.w}px;">${esc(c.label)}</th>`).join('')+`<th class="blk-a" style="width:32px;min-width:32px;"></th>`;
+  const tbod=E.rows.map((r,i)=>{
+    return `<tr data-matrow="${i}"><td class="rownum">${i+1}</td>${tblCols.map(c=>{
+      const v=r[c.k]||'';
+      const tp=c.num?'number':'text';
+      const cls=c.num?'num':'';
+      return `<td><input class="${cls}" type="${tp}" data-matfield="${c.k}" data-mati="${i}" value="${esc(v)}" ${c.num?'step="any" inputmode="decimal"':''} autocomplete="off"></td>`;
+    }).join('')}<td style="text-align:center;"><button class="trash-btn" data-action="del-matrow" data-i="${i}" title="Delete row">${trashIcon()}</button></td></tr>`;
+  }).join('');
+
+  return `
+    <div class="entry-toolbar" style="justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn btn-ghost" data-action="back-to-matview" style="padding:6px 12px;">← Back to List</button>
+        <span style="font-size:12px;font-weight:600;color:var(--ink);">Material Received — New Entry</span>
+      </div>
+      <span style="font-size:11px;color:var(--muted);">Saving as: <b style="color:var(--ink);">${esc(S.user.name)}</b></span>
+    </div>
+    <div class="entry-panels" style="flex-direction:column;gap:6px;">
+      <div class="entry-panel" style="flex:none;">
+        <div class="panel-head">Top Fields (Common per entry)</div>
+        <div style="padding:10px 12px;display:flex;flex-wrap:wrap;gap:10px 16px;">${topHtml}</div>
+      </div>
+      <div class="entry-panel" style="flex:1;min-height:0;">
+        <div class="panel-head">Item Rows <span class="panel-count">${E.rows.length} rows</span></div>
+        <div class="entry-scroll"><table class="entry" style="table-layout:fixed;"><thead><tr>${hdr}</tr></thead><tbody>${tbod}</tbody></table></div>
+        <div class="panel-foot">
+          <button class="btn btn-ghost" data-action="add-matrow">+ Add Row</button>
+          <button class="btn btn-gold" data-action="submit-matrec" ${S.saving?'disabled':''}>${S.saving?'<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Saving…':'Save Material Entry'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitMatRec(){
+  const E=S.matRecEntry;if(!E)return;
+  const T=E.topFields;
+  // Collect rows that have at least some data
+  const validRows=E.rows.filter(r=>Object.values(r).some(v=>v!==''));
+  if(!validRows.length){showToast("Koi item row nahi bhari. Kam se kam ek row mein data daalo.",true);return;}
+
+  S.saving=true;render();showSavingOverlay('Saving material entry…');
+  try{
+    const result=await runServer('saveMatRecEntries',{
+      topFields:T,rows:validRows,loginId:S.user.id,loginName:S.user.name||S.user.id
+    });
+    S.saving=false;hideSavingOverlay();
+    if(result.status!=='ok'){showToast("Save failed: "+(result.message||'unknown'),true);return;}
+    // Add to local data for immediate view
+    const ts=fmtNow();
+    validRows.forEach(r=>{
+      S.matRecResp.push(Object.assign({},T,r,{timestamp:ts,loginName:S.user.name||S.user.id}));
+    });
+    S.matRecEntry=null;S.page='matRecView';
+    showToast(`Saved ${result.saved} material received row(s).`,false);
+  }catch(err){S.saving=false;hideSavingOverlay();showToast("Save failed: "+err.message,true);}
+}
+
 /* ============================= DATE RANGE PICKER (Table Filter) ============================= */
 let drState=null; // {table,col,from:Date|null,to:Date|null,month1:Date,selecting:'from'|'to',presetKey:null}
 
@@ -1504,6 +1667,12 @@ document.addEventListener('input',e=>{
   if(el.classList.contains('cell-error')&&el.value){el.classList.remove('cell-error');el.style.borderColor='';el.style.background='';}
   if(el.hasAttribute('data-a')||el.hasAttribute('data-b')){onEntryFieldInput(el);return;}
   if(el.hasAttribute('data-madd')){onMasterAddInput(el);return;}
+  if(el.hasAttribute('data-mattop')){
+    if(S.matRecEntry){S.matRecEntry.topFields[el.getAttribute('data-mattop')]=el.value;}return;
+  }
+  if(el.hasAttribute('data-matfield')){
+    if(S.matRecEntry){const i=parseInt(el.getAttribute('data-mati'),10);const f=el.getAttribute('data-matfield');S.matRecEntry.rows[i][f]=el.value;}return;
+  }
   if(el.getAttribute('data-action')==='rpt-search'){
     const col=el.getAttribute('data-col');
     if(col){S.report['f_'+col]=el.value;}else{S.report.search=el.value;}
@@ -1554,6 +1723,11 @@ document.addEventListener('click',e=>{
   if(a==='del-a'){delRowA(parseInt(el.getAttribute('data-i'),10));return;}
   if(a==='del-b'){delRowB(parseInt(el.getAttribute('data-i'),10));return;}
   if(a==='submit-entry'){submitEntry();return;}
+  if(a==='open-matrec-add'){openMatRecAdd();return;}
+  if(a==='back-to-matview'){closeMatRecAdd();return;}
+  if(a==='add-matrow'){if(S.matRecEntry){S.matRecEntry.rows.push({changeBrand:'',brand:'',salesOrderId:'',itemName:'',pendingQty:'',recQty:'',cancelQty:'',poRate:'',size:'',unit:'',invoiceRate:'',inwardBatchNo:'',grossWeight:'',remarks:'',newUniqueNo:'',outwardBatchNo:'',matRecImage:''});render();}return;}
+  if(a==='del-matrow'){if(S.matRecEntry){S.matRecEntry.rows.splice(parseInt(el.getAttribute('data-i'),10),1);render();}return;}
+  if(a==='submit-matrec'){submitMatRec();return;}
   if(a==='sort'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.sort===c)st.dir*=-1;else{st.sort=c;st.dir=1;}st.page=1;render();return;}
   if(a==='dt-refresh'){
     // Refresh: clear ALL filters for this table, reset to page 1, then pull fresh data
@@ -1659,10 +1833,12 @@ function render(){
   else if(S.page==='entryCommodity')inner=renderEntry('commodity');
   else if(S.page==='reportEquity')inner=renderReport('equity');
   else if(S.page==='reportCommodity')inner=renderReport('commodity');
+  else if(S.page==='matRecAdd')inner=renderMatRecAdd();
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
   app.innerHTML=renderShell(inner);
   if(S.page==='entryEquity'||S.page==='entryCommodity')initEntryDatePicker();
+  if(S.page==='matRecAdd')initMatRecDatePickers();
 }
 
 loadAll();
