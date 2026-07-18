@@ -240,7 +240,7 @@ table.dt tbody tr:hover{background:var(--accent-tint2);}
 .rpt-scroll{flex:1;overflow:auto;min-height:0;}
 table.rpt-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;}
 table.rpt-table thead tr{position:sticky;top:0;z-index:4;}
-table.rpt-table .rpt-th-fixed{background:#0F141B;color:#D6CFC0;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:6px 8px;font-weight:600;white-space:nowrap;border-right:1px solid #1E2531;position:sticky;top:0;cursor:pointer;user-select:none;}
+table.rpt-table .rpt-th-fixed{background:#0F141B;color:#D6CFC0;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:6px 8px;font-weight:600;white-space:normal;word-wrap:break-word;border-right:1px solid #1E2531;position:sticky;top:0;cursor:pointer;user-select:none;}
 table.rpt-table .rpt-th-fixed:hover{background:#1A2030;}
 table.rpt-table .rpt-th-fixed .sort-ic{font-size:8px;color:var(--accent);margin-left:3px;}
 table.rpt-table .rpt-th-fixed .th-search{margin-top:4px;}
@@ -1069,7 +1069,7 @@ function renderReport(seg){
   const fixedHdr=`<th class="rpt-th-fixed" style="cursor:default;width:32px;min-width:32px;">S.No</th>`+RPT_FIXED_COLS.map(c=>{
     const si=R.sort===c.k?(R.sortDir===1?'▲':'▼'):'';
     const w=R.widths[c.k]||c.def;
-    return `<th class="rpt-th-fixed${c.last?' rpt-group-end':''}" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;min-width:${w}px;max-width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
+    return `<th class="rpt-th-fixed${c.last?' rpt-group-end':''}" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
   }).join('');
   const monthHdr=months.map((mo,mi)=>{
     const rmsSort=R.monthSort===`rms_${mi}`?(R.monthSortDir===1?'▲':'▼'):'';
