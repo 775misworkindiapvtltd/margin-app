@@ -223,6 +223,7 @@ table.dt tbody tr:hover{background:var(--accent-tint2);}
 
 .saving-overlay{position:fixed;inset:0;background:rgba(12,16,23,.35);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(1px);}
 .saving-overlay .saving-box{background:var(--surface);border-radius:12px;padding:24px 36px;box-shadow:0 20px 50px rgba(0,0,0,.25);display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;color:var(--ink);}
+.neg-err{display:none;font-size:9.5px;color:var(--danger);font-weight:600;margin-top:2px;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -455,6 +456,16 @@ function parseDT(v){
   const t=Date.parse(s);return isNaN(t)?null:t;
 }
 function isDateColumn(key){ return key==='timestamp'||key==='date'; }
+// Show a brief error below a numeric input when negative value is entered, auto-disappears after 1s
+function showNegError(el){
+  const td=el.closest('td');if(!td)return;
+  let msg=td.querySelector('.neg-err');
+  if(!msg){msg=document.createElement('div');msg.className='neg-err';td.appendChild(msg);}
+  msg.textContent='Negative value not allowed';
+  msg.style.display='block';
+  setTimeout(()=>{msg.style.display='none';},1000);
+}
+
 // Full-screen saving overlay — blocks ALL interaction while save is in progress
 function showSavingOverlay(msg){
   let el=document.getElementById('savingOverlay');
@@ -672,7 +683,14 @@ function onEntryFieldInput(el){
   const seg=currentSegment();if(!seg)return;const E=S.entry[seg];
   const i=parseInt(el.getAttribute('data-i'),10);
   const aF=el.getAttribute('data-a'),bF=el.getAttribute('data-b');
-  if(bF){E.rowsB[i][bF]=el.value;return;}
+  if(bF){
+    E.rowsB[i][bF]=el.value;
+    // Block negative values for group margin
+    if(bF==='margin'&&el.value!==''&&parseFloat(el.value)<0){
+      el.value='';E.rowsB[i][bF]='';showNegError(el);
+    }
+    return;
+  }
   if(!aF)return;
   const r=E.rowsA[i];
   if(aF==='code'){
@@ -692,6 +710,10 @@ function onEntryFieldInput(el){
     return;
   }
   r[aF]=el.value; // marginRMS / marginAllocated
+  // Block negative values for margin fields
+  if((aF==='marginRMS'||aF==='marginAllocated')&&el.value!==''&&parseFloat(el.value)<0){
+    el.value='';r[aF]='';showNegError(el);return;
+  }
 }
 
 function renderEntry(seg){
@@ -714,8 +736,8 @@ function renderEntry(seg){
       <td>${buildCascadeCellHtml('name',i,r.name,info.name,showE&&!r.name)}</td>
       <td>${buildCascadeCellHtml('group',i,r.group,info.group,showE&&!r.group)}</td>
       <td>${buildCascadeCellHtml('branchName',i,r.branchName,info.branchName,showE&&!r.branchName)}</td>
-      <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
-      <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
+      <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" min="0" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
+      <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" min="0" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
     </tr>`;
   }).join("");
@@ -726,7 +748,7 @@ function renderEntry(seg){
     return `<tr>
       <td class="rownum">${i+1}</td>
       <td><input type="text" class="${(showEB&&!r.group)?'cell-error':''}" list="grouplist" data-b="group" data-i="${i}" value="${esc(r.group)}" placeholder="Select group…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
-      <td><input class="num${(showEB&&r.margin==="")?' cell-error':''}" type="number" step="any" inputmode="decimal" data-b="margin" data-i="${i}" value="${esc(r.margin)}" placeholder=""></td>
+      <td><input class="num${(showEB&&r.margin==="")?' cell-error':''}" type="number" step="any" min="0" inputmode="decimal" data-b="margin" data-i="${i}" value="${esc(r.margin)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-b" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
     </tr>`;
   }).join("");
