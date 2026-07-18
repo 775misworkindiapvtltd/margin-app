@@ -252,8 +252,35 @@ function masterFor(seg){ return seg==='commodity'?S.masterCommodity:S.masterEqui
 function uniqueCodes(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.code).filter(Boolean))).sort(); }
 function matchesForCode(seg,code){ return masterFor(seg).filter(m=>m.code===code); }
 function groupNamesList(seg){ return Array.from(new Set(masterFor(seg).map(m=>m.group).filter(Boolean))).sort(); }
-// Distinct branch names for a given code+userId match set (mirrors userId cascading logic)
-function branchesForMatches(ms){ return Array.from(new Set(ms.map(m=>m.branchName).filter(Boolean))); }
+
+// Ordered list of fields that cascade off CODE, each narrowing the match set for the next.
+// A field becomes a dropdown ONLY when there are multiple distinct values remaining for it;
+// if there is exactly one, it auto-fills (non-editable). Any field after an unresolved
+// dropdown is left blank until the user picks a value for that upstream field.
+const CASCADE_FIELDS=['userId','software','name','group','branchName'];
+
+// Recompute + auto-resolve a row's cascade fields (mutates r). Returns per-field
+// { options:[...], dropdown:bool } describing how to render each cell.
+function resolveCascade(seg,r){
+  const info={};
+  let matches=r.code?matchesForCode(seg,r.code):[];
+  let blocked=!r.code;
+  CASCADE_FIELDS.forEach(f=>{
+    if(blocked){ r[f]=""; info[f]={options:[],dropdown:false}; return; }
+    const distinct=Array.from(new Set(matches.map(m=>m[f]).filter(Boolean)));
+    if(distinct.length===0){ r[f]=""; info[f]={options:[],dropdown:false}; blocked=true; return; }
+    if(distinct.length===1){
+      r[f]=distinct[0]; info[f]={options:distinct,dropdown:false};
+      matches=matches.filter(m=>m[f]===distinct[0]);
+      return;
+    }
+    // Multiple options for this field — needs a dropdown selection.
+    info[f]={options:distinct,dropdown:true};
+    if(r[f]&&distinct.includes(r[f])){ matches=matches.filter(m=>m[f]===r[f]); }
+    else { r[f]=""; blocked=true; }
+  });
+  return info;
+}
 
 /* ============================= HELPERS ============================= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return "&#"+c.charCodeAt(0)+";";});}
@@ -450,11 +477,7 @@ function highlightErrors(seg){
     const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
     const markRed=function(el){if(el){el.classList.add('cell-error');el.style.borderColor='#C4291C';el.style.background='#FEF2F2';}};
     if(!r.code) markRed(row.querySelector('[data-a="code"]'));
-    if(!r.userId) markRed(row.querySelector('[data-field="userId"]'));
-    if(!r.software) markRed(row.querySelector('[data-field="software"]'));
-    if(!r.name) markRed(row.querySelector('[data-field="name"]'));
-    if(!r.group) markRed(row.querySelector('[data-field="group"]'));
-    if(!r.branchName) markRed(row.querySelector('[data-a="branchName"],[data-field="branchName"]'));
+    CASCADE_FIELDS.forEach(f=>{ if(!r[f]) markRed(row.querySelector(`[data-field="${f}"]`)); });
     if(r.marginRMS==="") markRed(row.querySelector('[data-a="marginRMS"]'));
     if(r.marginAllocated==="") markRed(row.querySelector('[data-a="marginAllocated"]'));
   });
@@ -471,67 +494,68 @@ function highlightErrors(seg){
 function updateDependentFields(i){
   const seg=currentSegment();if(!seg)return;const r=S.entry[seg].rowsA[i];
   const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
-  const uid=row.querySelector('[data-field="userId"]'),sw=row.querySelector('[data-field="software"]'),nm=row.querySelector('[data-field="name"]'),gp=row.querySelector('[data-field="group"]'),br=row.querySelector('[data-field="branchName"]');
-  if(uid){ if(uid.tagName==='INPUT'&&uid!==document.activeElement) uid.value=r.userId; else if(uid.tagName==='DIV') uid.textContent=r.userId; }
-  if(sw) sw.textContent=r.software; if(nm) nm.textContent=r.name; if(gp) gp.textContent=r.group;
-  if(br){ if(br.tagName==='INPUT'&&br!==document.activeElement) br.value=r.branchName; else if(br.tagName==='DIV') br.textContent=r.branchName; }
+  CASCADE_FIELDS.forEach(f=>{
+    const cell=row.querySelector(`[data-field="${f}"]`);if(!cell)return;
+    if(cell.tagName==='INPUT'){ if(cell!==document.activeElement) cell.value=r[f]||''; }
+    else if(cell.tagName==='DIV'){ cell.textContent=r[f]||''; }
+    // If the cell's tag type no longer matches what it should be (e.g. it needs to switch
+    // between a dropdown <input> and a plain <div>), a full render() (triggered on focusout)
+    // will rebuild it correctly.
+  });
 }
 
 function onEntryFieldInput(el){
   const seg=currentSegment();if(!seg)return;const E=S.entry[seg];
   const i=parseInt(el.getAttribute('data-i'),10);
   const aF=el.getAttribute('data-a'),bF=el.getAttribute('data-b');
-  if(aF==='code'){
-    E.rowsA[i].code=el.value;
-    const ms=el.value?matchesForCode(seg,el.value):[];
-    const distinctBranches=branchesForMatches(ms);
-    if(ms.length===1){E.rowsA[i].userId=ms[0].userId;E.rowsA[i].software=ms[0].software;E.rowsA[i].name=ms[0].name;E.rowsA[i].group=ms[0].group;}
-    else{E.rowsA[i].userId="";E.rowsA[i].software="";E.rowsA[i].name="";E.rowsA[i].group="";}
-    // Branch Name follows the same rule as User ID: multiple distinct values for the code -> user must pick; else auto-fill.
-    E.rowsA[i].branchName=(distinctBranches.length===1)?distinctBranches[0]:"";
-    updateDependentFields(i);return;
-  }
-  if(aF==='userId'){
-    E.rowsA[i].userId=el.value;
-    const match=matchesForCode(seg,E.rowsA[i].code).find(m=>m.userId===el.value);
-    if(match){E.rowsA[i].software=match.software;E.rowsA[i].name=match.name;E.rowsA[i].group=match.group;}
-    else{E.rowsA[i].software="";E.rowsA[i].name="";E.rowsA[i].group="";}
-    updateDependentFields(i);return;
-  }
-  if(aF){E.rowsA[i][aF]=el.value;return;}
   if(bF){E.rowsB[i][bF]=el.value;return;}
+  if(!aF)return;
+  const r=E.rowsA[i];
+  if(aF==='code'){
+    r.code=el.value;
+    CASCADE_FIELDS.forEach(f=>{r[f]="";});
+    resolveCascade(seg,r);
+    updateDependentFields(i);return;
+  }
+  if(CASCADE_FIELDS.indexOf(aF)!==-1){
+    r[aF]=el.value;
+    // Any field downstream of this one is no longer valid — clear it so it gets recomputed.
+    const idx=CASCADE_FIELDS.indexOf(aF);
+    CASCADE_FIELDS.slice(idx+1).forEach(f=>{r[f]="";});
+    resolveCascade(seg,r);
+    updateDependentFields(i);return;
+  }
+  r[aF]=el.value; // marginRMS / marginAllocated
 }
 
 function renderEntry(seg){
   const E=S.entry[seg];
   const segLabel=seg==='commodity'?'Commodity':'Equity';
   const tblA=E.rowsA.map((r,i)=>{
-    const ms=r.code?matchesForCode(seg,r.code):[];
-    const distinctBranches=branchesForMatches(ms);
+    // Generic multi-level cascade: Code -> UserID -> Software -> Name -> Group -> BranchName.
+    // Each field is only resolved (auto-filled / offered as a dropdown) once all upstream
+    // fields are confirmed; downstream fields stay blank until then.
+    const info=resolveCascade(seg,r);
     // Error highlight logic — driven by state so render() never wipes it
     const anyA=r.code||r.userId!==""||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
     const showE=E.showErrors&&anyA;
     const ec=cond=>(showE&&cond)?' cell-error':'';
-    let uidCell;
-    if(!r.code) uidCell=`<div class="cell-ro${ec(true)}" data-field="userId"></div>`;
-    else if(ms.length<=1) uidCell=`<div class="cell-ro${ec(!r.userId)}" data-field="userId">${esc(r.userId)}</div>`;
-    else{
-      const uids=Array.from(new Set(ms.map(m=>m.userId)));
-      uidCell=`<input type="text" class="${(showE&&!r.userId)?'cell-error':''}" data-field="userId" list="ul-${i}" data-a="userId" data-i="${i}" value="${esc(r.userId)}" placeholder="Type…" autocomplete="off"><datalist id="ul-${i}">${uids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist>`;
-    }
-    // Branch Name — from MASTER, same auto-pick rule as User ID: multiple distinct branches for the code -> dropdown, else auto-filled/non-editable.
-    let branchCell;
-    if(!r.code) branchCell=`<div class="cell-ro${ec(true)}" data-field="branchName"></div>`;
-    else if(distinctBranches.length<=1) branchCell=`<div class="cell-ro${ec(!r.branchName)}" data-field="branchName">${esc(r.branchName)}</div>`;
-    else branchCell=`<input type="text" class="${(showE&&!r.branchName)?'cell-error':''}" data-field="branchName" list="bl-${i}" data-a="branchName" data-i="${i}" value="${esc(r.branchName)}" placeholder="Select branch…" autocomplete="off"><datalist id="bl-${i}">${distinctBranches.map(b=>`<option value="${esc(b)}">`).join("")}</datalist>`;
+    const cascadeCell=(f)=>{
+      const opt=info[f],val=r[f]||'';
+      if(opt.dropdown){
+        const listId=`cl-${f}-${i}`;
+        return `<input type="text" class="${(showE&&!val)?'cell-error':''}" data-field="${f}" data-a="${f}" data-i="${i}" list="${listId}" value="${esc(val)}" placeholder="Select…" autocomplete="off"><datalist id="${listId}">${opt.options.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>`;
+      }
+      return `<div class="cell-ro${ec(!val)}" data-field="${f}">${esc(val)}</div>`;
+    };
     return `<tr data-rowa="${i}">
       <td class="rownum">${i+1}</td>
       <td><input type="text" class="${(showE&&!r.code)?'cell-error':''}" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
-      <td>${uidCell}</td>
-      <td><div class="cell-ro${ec(!r.software)}" data-field="software">${esc(r.software)}</div></td>
-      <td><div class="cell-ro${ec(!r.name)}" data-field="name">${esc(r.name)}</div></td>
-      <td><div class="cell-ro${ec(!r.group)}" data-field="group">${esc(r.group)}</div></td>
-      <td>${branchCell}</td>
+      <td>${cascadeCell('userId')}</td>
+      <td>${cascadeCell('software')}</td>
+      <td>${cascadeCell('name')}</td>
+      <td>${cascadeCell('group')}</td>
+      <td>${cascadeCell('branchName')}</td>
       <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
       <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
@@ -724,7 +748,7 @@ document.addEventListener('submit',e=>{if(e.target&&e.target.id==='loginForm'){e
 
 document.addEventListener('focusout',e=>{
   const el=e.target;
-  if(el.hasAttribute('data-a')){const f=el.getAttribute('data-a');if(f==='code'||f==='userId'){setTimeout(()=>render(),100);}}
+  if(el.hasAttribute('data-a')){const f=el.getAttribute('data-a');if(f==='code'||CASCADE_FIELDS.indexOf(f)!==-1){setTimeout(()=>render(),100);}}
 });
 
 document.addEventListener('input',e=>{
