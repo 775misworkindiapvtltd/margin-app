@@ -246,11 +246,13 @@ table.rpt-table .rpt-th-fixed .sort-ic{font-size:8px;color:var(--accent);margin-
 table.rpt-table .rpt-th-fixed .th-search{margin-top:4px;}
 table.rpt-table .rpt-th-fixed .th-search input{width:100%;padding:3px 6px;border-radius:3px;border:1px solid #2D3545;background:#0A0E14;color:#E8E0D0;font-size:10px;}
 table.rpt-table .rpt-th-fixed .th-search input::placeholder{color:#5A6070;}
-table.rpt-table .rpt-th-month{background:#1A1710;color:#E8D8B0;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:5px 8px;border-right:1px solid #2A2518;text-align:center;position:sticky;top:0;font-weight:700;color:var(--accent);}
-table.rpt-table .rpt-th-sub{background:#0F141B;color:#9A948A;font-size:8.5px;text-transform:uppercase;letter-spacing:.04em;padding:4px 6px;border-right:1px solid #2A2518;text-align:center;position:sticky;top:28px;z-index:3;font-weight:600;white-space:normal;word-wrap:break-word;cursor:pointer;user-select:none;position:relative;}
-table.rpt-table .rpt-th-sub:hover{color:var(--accent);}
-table.rpt-table .rpt-th-sub .rpt-resize{position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:5;}
-table.rpt-table .rpt-th-sub .rpt-resize:hover{background:rgba(180,134,43,.5);}
+table.rpt-table .rpt-th-month{background:#1A1710;color:#9A948A;font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;padding:4px 6px;border-right:1px solid #2A2518;text-align:center;position:sticky;top:0;white-space:normal;word-wrap:break-word;position:relative;font-weight:600;cursor:pointer;user-select:none;}
+table.rpt-table .rpt-th-month:hover{color:var(--accent);}
+table.rpt-table .rpt-th-month .m-label{display:block;font-weight:700;font-size:9.5px;color:var(--accent);margin-bottom:2px;letter-spacing:.03em;}
+table.rpt-table .rpt-th-month .rpt-resize{position:absolute;right:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:5;}
+table.rpt-table .rpt-th-month .rpt-resize:hover{background:rgba(180,134,43,.5);}
+table.rpt-table .rpt-th-month-first .m-label{display:block;}
+table.rpt-table .rpt-th-month-hide .m-label{visibility:hidden;height:0;margin:0;overflow:hidden;}
 table.rpt-table tbody td{border-bottom:1px solid var(--line-light);vertical-align:top;font-size:11.5px;}
 table.rpt-table tbody tr:nth-child(even){background:#FAFAF7;}
 table.rpt-table tbody tr:hover{background:var(--accent-tint2);}
@@ -1069,22 +1071,13 @@ function renderReport(seg){
     return `<th class="rpt-th-fixed${c.last?' rpt-group-end':''}" data-action="rpt-sort" data-col="${c.k}" style="width:${w}px;">${c.l}<span class="sort-ic">${si}</span><div class="th-search"><input type="text" placeholder="Filter…" data-action="rpt-search" data-col="${c.k}" value="${esc(R['f_'+c.k]||'')}" onclick="event.stopPropagation()"></div><div class="rpt-resize" data-action="rpt-resize" data-col="${c.k}"></div></th>`;
   }).join('');
   const monthHdr=months.map((mo,mi)=>{
-    const bc=mi>0?' rpt-month-border':'';
-    return `<th class="rpt-th-month${bc}" colspan="3">${mo.label}</th>`;
-  }).join('');
-  // Second header row: sub-columns per month (Date, RMS, ON ID) — individually resizable
-  const fixedHdr2=`<th class="rpt-th-fixed" style="cursor:default;width:32px;min-width:32px;"></th>`+RPT_FIXED_COLS.map(c=>{
-    const w=R.widths[c.k]||c.def;
-    return `<th class="rpt-th-fixed${c.last?' rpt-group-end':''}" style="width:${w}px;"></th>`;
-  }).join('');
-  const monthSubHdr=months.map((mo,mi)=>{
     const rmsSort=R.monthSort===`rms_${mi}`?(R.monthSortDir===1?' ▲':' ▼'):'';
     const allocSort=R.monthSort===`alloc_${mi}`?(R.monthSortDir===1?' ▲':' ▼'):'';
     const bc=mi>0?' rpt-month-border':'';
     const wDate=R.widths[`date_${mi}`]||80;
     const wRms=R.widths[`rms_${mi}`]||80;
     const wAlloc=R.widths[`alloc_${mi}`]||80;
-    return `<th class="rpt-th-sub${bc}" style="width:${wDate}px;">Date<div class="rpt-resize" data-action="rpt-resize" data-col="date_${mi}"></div></th><th class="rpt-th-sub" style="width:${wRms}px;" data-action="rpt-sort-month" data-col="rms_${mi}">Margin RMS${rmsSort}<div class="rpt-resize" data-action="rpt-resize" data-col="rms_${mi}"></div></th><th class="rpt-th-sub" style="width:${wAlloc}px;" data-action="rpt-sort-month" data-col="alloc_${mi}">Margin ON ID${allocSort}<div class="rpt-resize" data-action="rpt-resize" data-col="alloc_${mi}"></div></th>`;
+    return `<th class="rpt-th-month rpt-th-month-first${bc}" style="width:${wDate}px;"><span class="m-label">${mo.label}</span>Date<div class="rpt-resize" data-action="rpt-resize" data-col="date_${mi}"></div></th><th class="rpt-th-month rpt-th-month-hide" style="width:${wRms}px;" data-action="rpt-sort-month" data-col="rms_${mi}"><span class="m-label">${mo.label}</span>Margin RMS${rmsSort}<div class="rpt-resize" data-action="rpt-resize" data-col="rms_${mi}"></div></th><th class="rpt-th-month rpt-th-month-hide" style="width:${wAlloc}px;" data-action="rpt-sort-month" data-col="alloc_${mi}"><span class="m-label">${mo.label}</span>Margin ON ID${allocSort}<div class="rpt-resize" data-action="rpt-resize" data-col="alloc_${mi}"></div></th>`;
   }).join('');
 
   // Per-column filter
@@ -1157,7 +1150,7 @@ function renderReport(seg){
     <div class="rpt-table-wrap">
       <div class="rpt-scroll">
         <table class="rpt-table">
-          <thead><tr>${fixedHdr}${monthHdr}</tr><tr>${fixedHdr2}${monthSubHdr}</tr></thead>
+          <thead><tr>${fixedHdr}${monthHdr}</tr></thead>
           <tbody>${bodyRows||`<tr><td colspan="${6+numMonths*3}" class="rpt-empty">No data found for this selection.</td></tr>`}</tbody>
         </table>
       </div>
