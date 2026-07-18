@@ -282,6 +282,68 @@ function resolveCascade(seg,r){
   return info;
 }
 
+// Pure "contains" (substring) filter — case-insensitive. Used instead of native
+// datalist prefix-matching so typing "117" finds "RS117" anywhere in the string.
+function filterOptionsContains(options,query){
+  if(!query) return options;
+  const q=String(query).toLowerCase();
+  return options.filter(o=>String(o).toLowerCase().includes(q));
+}
+
+// Build the HTML for one cascade cell (userId/software/name/group/branchName).
+// Pure function — used by both the initial full render AND live per-keystroke patching,
+// so the two never drift out of sync.
+function buildCascadeCellHtml(f,i,val,opt,isErr){
+  val=val||'';
+  if(opt&&opt.dropdown){
+    const listId=`cl-${f}-${i}`;
+    const filtered=filterOptionsContains(opt.options,val);
+    return `<input type="text" class="${isErr?'cell-error':''}" data-field="${f}" data-a="${f}" data-i="${i}" list="${listId}" value="${esc(val)}" placeholder="Select…" autocomplete="off"><datalist id="${listId}">${filtered.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>`;
+  }
+  return `<div class="cell-ro${isErr?' cell-error':''}" data-field="${f}">${esc(val)}</div>`;
+}
+
+// Replace a <datalist>'s <option> children in place (keeps the owning <input>'s
+// DOM node — and therefore its focus/cursor position — completely untouched).
+function refreshDatalist(listId,options){
+  const dl=document.getElementById(listId);if(!dl)return;
+  dl.innerHTML=options.map(o=>`<option value="${esc(o)}">`).join("");
+}
+
+// Live-patch a single entry row after a keystroke, WITHOUT doing a full render().
+// - The cell the user is actively typing in (`activeField`) is never rebuilt (so its
+//   focus/cursor/IME state is preserved); only its <datalist> options are refreshed
+//   with a substring filter of the text currently typed.
+// - Every OTHER cascade cell is rebuilt live, so User ID / Software / Name / Group /
+//   Branch Name switch between "auto-filled" and "dropdown" the instant enough of the
+//   code (or an upstream field) has been typed — no need to click outside the cell.
+function liveSyncRow(seg,i,activeField){
+  const E=S.entry[seg];const r=E.rowsA[i];if(!r)return;
+  const info=resolveCascade(seg,r);
+  const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
+  const anyA=r.code||r.userId!==""||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
+  const showE=E.showErrors&&anyA;
+
+  if(activeField==='code'){
+    const codeInput=row.querySelector('[data-a="code"]');
+    if(codeInput) refreshDatalist('codelist',filterOptionsContains(uniqueCodes(seg),codeInput.value));
+  }
+
+  CASCADE_FIELDS.forEach(f=>{
+    if(f===activeField){
+      // Still being typed — leave the cell alone, just live-filter its own datalist.
+      if(info[f]&&info[f].dropdown){
+        const liveEl=row.querySelector(`[data-field="${f}"]`);
+        if(liveEl&&liveEl.tagName==='INPUT') refreshDatalist(`cl-${f}-${i}`,filterOptionsContains(info[f].options,liveEl.value));
+      }
+      return;
+    }
+    const cell=row.querySelector(`[data-field="${f}"]`);if(!cell)return;
+    const td=cell.closest('td');if(!td)return;
+    td.innerHTML=buildCascadeCellHtml(f,i,r[f],info[f],showE&&!r[f]);
+  });
+}
+
 /* ============================= HELPERS ============================= */
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return "&#"+c.charCodeAt(0)+";";});}
 function trashIcon(){return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;}
@@ -491,19 +553,6 @@ function highlightErrors(seg){
   });
 }
 
-function updateDependentFields(i){
-  const seg=currentSegment();if(!seg)return;const r=S.entry[seg].rowsA[i];
-  const row=document.querySelector(`tr[data-rowa="${i}"]`);if(!row)return;
-  CASCADE_FIELDS.forEach(f=>{
-    const cell=row.querySelector(`[data-field="${f}"]`);if(!cell)return;
-    if(cell.tagName==='INPUT'){ if(cell!==document.activeElement) cell.value=r[f]||''; }
-    else if(cell.tagName==='DIV'){ cell.textContent=r[f]||''; }
-    // If the cell's tag type no longer matches what it should be (e.g. it needs to switch
-    // between a dropdown <input> and a plain <div>), a full render() (triggered on focusout)
-    // will rebuild it correctly.
-  });
-}
-
 function onEntryFieldInput(el){
   const seg=currentSegment();if(!seg)return;const E=S.entry[seg];
   const i=parseInt(el.getAttribute('data-i'),10);
@@ -514,16 +563,18 @@ function onEntryFieldInput(el){
   if(aF==='code'){
     r.code=el.value;
     CASCADE_FIELDS.forEach(f=>{r[f]="";});
-    resolveCascade(seg,r);
-    updateDependentFields(i);return;
+    // Live-patch every OTHER cell in this row right now — no need to click outside
+    // the Code field first. The Code input itself is left untouched (focus/cursor safe).
+    liveSyncRow(seg,i,'code');
+    return;
   }
   if(CASCADE_FIELDS.indexOf(aF)!==-1){
     r[aF]=el.value;
     // Any field downstream of this one is no longer valid — clear it so it gets recomputed.
     const idx=CASCADE_FIELDS.indexOf(aF);
     CASCADE_FIELDS.slice(idx+1).forEach(f=>{r[f]="";});
-    resolveCascade(seg,r);
-    updateDependentFields(i);return;
+    liveSyncRow(seg,i,aF);
+    return;
   }
   r[aF]=el.value; // marginRMS / marginAllocated
 }
@@ -540,22 +591,14 @@ function renderEntry(seg){
     const anyA=r.code||r.userId!==""||r.software||r.name||r.group||r.branchName||r.marginRMS!==""||r.marginAllocated!=="";
     const showE=E.showErrors&&anyA;
     const ec=cond=>(showE&&cond)?' cell-error':'';
-    const cascadeCell=(f)=>{
-      const opt=info[f],val=r[f]||'';
-      if(opt.dropdown){
-        const listId=`cl-${f}-${i}`;
-        return `<input type="text" class="${(showE&&!val)?'cell-error':''}" data-field="${f}" data-a="${f}" data-i="${i}" list="${listId}" value="${esc(val)}" placeholder="Select…" autocomplete="off"><datalist id="${listId}">${opt.options.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>`;
-      }
-      return `<div class="cell-ro${ec(!val)}" data-field="${f}">${esc(val)}</div>`;
-    };
     return `<tr data-rowa="${i}">
       <td class="rownum">${i+1}</td>
       <td><input type="text" class="${(showE&&!r.code)?'cell-error':''}" list="codelist" data-a="code" data-i="${i}" value="${esc(r.code)}" placeholder="Type code…" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onblur="if(!this.value)this.setAttribute('readonly','')"></td>
-      <td>${cascadeCell('userId')}</td>
-      <td>${cascadeCell('software')}</td>
-      <td>${cascadeCell('name')}</td>
-      <td>${cascadeCell('group')}</td>
-      <td>${cascadeCell('branchName')}</td>
+      <td>${buildCascadeCellHtml('userId',i,r.userId,info.userId,showE&&!r.userId)}</td>
+      <td>${buildCascadeCellHtml('software',i,r.software,info.software,showE&&!r.software)}</td>
+      <td>${buildCascadeCellHtml('name',i,r.name,info.name,showE&&!r.name)}</td>
+      <td>${buildCascadeCellHtml('group',i,r.group,info.group,showE&&!r.group)}</td>
+      <td>${buildCascadeCellHtml('branchName',i,r.branchName,info.branchName,showE&&!r.branchName)}</td>
       <td><input class="num${ec(r.marginRMS==="")}" type="number" step="any" inputmode="decimal" data-a="marginRMS" data-i="${i}" value="${esc(r.marginRMS)}" placeholder=""></td>
       <td><input class="num${ec(r.marginAllocated==="")}" type="number" step="any" inputmode="decimal" data-a="marginAllocated" data-i="${i}" value="${esc(r.marginAllocated)}" placeholder=""></td>
       <td style="text-align:center;"><button class="trash-btn" data-action="del-a" data-i="${i}" title="Delete row">${trashIcon()}</button><div class="row-resize"></div></td>
