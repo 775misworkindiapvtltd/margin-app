@@ -128,7 +128,8 @@ function mapUser_(r) {
     resp2Equity:     isYes_(pick_(r, ['RESPONSES 2 EQUITY'])),
     resp2Commodity:  isYes_(pick_(r, ['RESPONSES 2 COMODDITY', 'RESPONSES 2 COMMODITY'])),
     masterEquityAdd:    isYes_(pick_(r, ['MASTER EQUITY ADD ENTRY', 'MATER EQUITY ADD ENTRY'])),
-    masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY', 'MASTER COMMODITY ADD ENTRY', 'MATER COMMODITY ADD ENTRY']))
+    masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY', 'MASTER COMMODITY ADD ENTRY', 'MATER COMMODITY ADD ENTRY'])),
+    report:             isYes_(pick_(r, ['REPORT']))
   };
 }
 
@@ -160,8 +161,8 @@ function getBootstrapData(perms) {
   var loadAll = !perms;
   var needMasterEq    = loadAll || perms.equityEntry || perms.masterEquity || perms.masterEquityAdd;
   var needMasterComm  = loadAll || perms.commodityEntry || perms.masterCommodity || perms.masterCommodityAdd;
-  var needRespEq      = loadAll || perms.resp1Equity;
-  var needRespComm    = loadAll || perms.resp1Commodity;
+  var needRespEq      = loadAll || perms.resp1Equity || perms.report;
+  var needRespComm    = loadAll || perms.resp1Commodity || perms.report;
   var needResp2Eq     = loadAll || perms.resp2Equity;
   var needResp2Comm   = loadAll || perms.resp2Commodity;
 

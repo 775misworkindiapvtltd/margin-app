@@ -224,6 +224,38 @@ table.dt tbody tr:hover{background:var(--accent-tint2);}
 .saving-overlay{position:fixed;inset:0;background:rgba(12,16,23,.35);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(1px);}
 .saving-overlay .saving-box{background:var(--surface);border-radius:12px;padding:24px 36px;box-shadow:0 20px 50px rgba(0,0,0,.25);display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;color:var(--ink);}
 .neg-err{display:none;font-size:9.5px;color:var(--danger);font-weight:600;margin-top:2px;white-space:nowrap;}
+
+.rpt-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 0;flex:none;}
+.rpt-month-selector{display:flex;align-items:center;gap:8px;}
+.rpt-month-selector label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.rpt-month-selector select{padding:6px 12px;border:1.5px solid var(--line);border-radius:6px;background:#fff;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink);}
+.rpt-month-selector select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-tint);}
+.rpt-search{flex:1;min-width:180px;max-width:320px;}
+.rpt-search input{width:100%;padding:7px 12px;border:1.5px solid var(--line);border-radius:6px;background:#FAFAF7;font-size:12px;color:var(--ink);transition:border .15s;}
+.rpt-search input:focus{outline:none;border-color:var(--accent);background:#fff;box-shadow:0 0 0 2px var(--accent-tint);}
+.rpt-search input::placeholder{color:var(--muted);}
+.rpt-count{font-size:11.5px;color:var(--muted);font-weight:500;margin-left:auto;}
+.rpt-table-wrap{flex:1;min-height:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.04);display:flex;flex-direction:column;}
+.rpt-scroll{flex:1;overflow:auto;min-height:0;}
+table.rpt-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;}
+table.rpt-table thead tr{position:sticky;top:0;z-index:4;}
+table.rpt-table .rpt-th-fixed{background:#0F141B;color:#D6CFC0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:10px 12px;font-weight:600;white-space:nowrap;border-right:1px solid #1E2531;position:sticky;top:0;}
+table.rpt-table .rpt-th-month{background:#1A1710;color:#E8D8B0;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:0;border-right:2px solid #2A2518;text-align:center;position:sticky;top:0;}
+table.rpt-table .rpt-month-label{padding:8px 10px 2px;font-weight:700;font-size:11px;color:var(--accent);letter-spacing:.03em;}
+table.rpt-table .rpt-sub-hdr{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border-top:1px solid #2A2518;margin-top:4px;}
+table.rpt-table .rpt-sub-hdr span{padding:5px 8px;font-size:9px;font-weight:600;color:#9A948A;text-align:center;border-right:1px solid #2A2518;}
+table.rpt-table .rpt-sub-hdr span:last-child{border-right:none;}
+table.rpt-table tbody td{border-bottom:1px solid var(--line-light);vertical-align:top;font-size:12px;}
+table.rpt-table tbody tr:nth-child(even){background:#FAFAF7;}
+table.rpt-table tbody tr:hover{background:var(--accent-tint2);}
+table.rpt-table .rpt-td-sno{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);text-align:center;padding:8px 6px;width:40px;border-right:1px solid var(--line-light);}
+table.rpt-table .rpt-td-code{padding:8px 10px;border-right:1px solid var(--line-light);}
+table.rpt-table .rpt-td{padding:8px 10px;border-right:1px solid var(--line-light);white-space:nowrap;}
+table.rpt-table .rpt-td-name{white-space:normal;word-break:break-word;max-width:220px;}
+table.rpt-table .rpt-td-empty{padding:8px;border-right:2px solid var(--line-light);color:var(--muted);text-align:center;font-size:10px;}
+table.rpt-table .rpt-td-data{padding:6px 8px;border-right:1px solid var(--line-light);font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;white-space:nowrap;}
+table.rpt-table .rpt-td-num{padding:6px 8px;border-right:1px solid var(--line-light);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right;line-height:1.7;}
+table.rpt-table .rpt-empty{padding:40px;text-align:center;color:var(--muted);font-size:13px;}
 </style>
 </head>
 <body>
@@ -252,6 +284,7 @@ let S = {
   dt:{ resp1Equity:dtState(), resp1Commodity:dtState(), resp2Equity:dtState(), resp2Commodity:dtState(), masterEquity:dtState(), masterCommodity:dtState() },
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
   masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
+  report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:''},
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
 function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
@@ -298,7 +331,8 @@ async function loadHeavyData(){
       masterEquity:S.user.masterEquity, masterCommodity:S.user.masterCommodity,
       masterEquityAdd:S.user.masterEquityAdd, masterCommodityAdd:S.user.masterCommodityAdd,
       resp1Equity:S.user.resp1Equity, resp1Commodity:S.user.resp1Commodity,
-      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity
+      resp2Equity:S.user.resp2Equity, resp2Commodity:S.user.resp2Commodity,
+      report:S.user.report
     }:null;
     applyBootstrap(await runServer('getBootstrapData',perms));
     // Re-sync user permissions from the full bootstrap (may include latest changes)
@@ -580,12 +614,15 @@ const NAV_ITEMS=[
   {key:'resp2Commodity', label:'Response 2 · Commodity',group:'Response 2',  perm:'resp2Commodity'},
   {key:'masterEquity',   label:'Master · Equity',       group:'Master',      perm:'masterEquity'},
   {key:'masterCommodity',label:'Master · Commodity',    group:'Master',      perm:'masterCommodity'},
+  {key:'reportEquity',   label:'Report · Equity',       group:'Report',      perm:'report'},
+  {key:'reportCommodity',label:'Report · Commodity',    group:'Report',      perm:'report'},
 ];
 const PAGE_TITLES={
   entryEquity:'Equity — Margin Entry', entryCommodity:'Commodity — Margin Entry',
   resp1Equity:'Response 1', resp1Commodity:'Response 1',
   resp2Equity:'Response 2', resp2Commodity:'Response 2',
   masterEquity:'Master Data', masterCommodity:'Master Data',
+  reportEquity:'Report', reportCommodity:'Report',
 };
 function segOfPage(k){ return /Commodity$/.test(k)?'commodity':(/Equity$/.test(k)?'equity':null); }
 
@@ -951,6 +988,98 @@ function renderDataTable(tableKey){
     </div>`;
 }
 
+/* ============================= REPORT ============================= */
+const MONTH_NAMES=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTH_FULL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function renderReport(seg){
+  const segLabel=seg==='commodity'?'Commodity':'Equity';
+  const data=seg==='commodity'?S.respCommodity:S.respEquity;
+  const R=S.report;
+  const numMonths=4; // Show 4 months starting from selected month
+
+  // Build unique groups: CODE+USER ID+SOFTWARE+NAME+GROUP NAME
+  let groups={};
+  data.forEach(row=>{
+    const key=`${row.code}|||${row.userId}|||${row.software}|||${row.name}|||${row.group}`;
+    if(!groups[key]) groups[key]={code:row.code,userId:row.userId,software:row.software,name:row.name,group:row.group,entries:[]};
+    groups[key].entries.push(row);
+  });
+
+  // Filter by search
+  let groupList=Object.values(groups);
+  if(R.search){
+    const q=R.search.toLowerCase();
+    groupList=groupList.filter(g=>
+      g.code.toLowerCase().includes(q)||g.userId.toLowerCase().includes(q)||
+      g.software.toLowerCase().includes(q)||g.name.toLowerCase().includes(q)||
+      g.group.toLowerCase().includes(q)
+    );
+  }
+
+  // Build month columns
+  const months=[];
+  for(let i=0;i<numMonths;i++){
+    let m=R.month+i, y=R.year;
+    while(m>11){m-=12;y++;}
+    months.push({m,y,label:`${MONTH_NAMES[m]} ${y}`});
+  }
+
+  // Build header
+  const fixedHdr=`<th class="rpt-th-fixed">S.No</th><th class="rpt-th-fixed">Code</th><th class="rpt-th-fixed">User ID</th><th class="rpt-th-fixed">Software</th><th class="rpt-th-fixed">Name</th><th class="rpt-th-fixed">Group Name</th>`;
+  const monthHdr=months.map(mo=>`<th class="rpt-th-month" colspan="3"><div class="rpt-month-label">${mo.label}</div><div class="rpt-sub-hdr"><span>Date</span><span>Margin RMS</span><span>Margin ON ID</span></div></th>`).join('');
+
+  // Build body rows
+  const bodyRows=groupList.map((g,idx)=>{
+    const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td">${esc(g.group)}</td>`;
+
+    const monthCells=months.map(mo=>{
+      // Filter entries for this group in this month
+      const mEntries=g.entries.filter(e=>{
+        const d=parseDT(e.timestamp)||parseDT(e.date);
+        if(!d)return false;
+        const dt=new Date(d);
+        return dt.getMonth()===mo.m && dt.getFullYear()===mo.y;
+      });
+      if(!mEntries.length) return `<td class="rpt-td rpt-td-empty" colspan="3"></td>`;
+      // Multiple entries in same month: show all stacked
+      const dateCol=mEntries.map(e=>esc(e.date||'')).join('<br>');
+      const rmsCol=mEntries.map(e=>esc(String(e.marginRMS||''))).join('<br>');
+      const allocCol=mEntries.map(e=>esc(String(e.marginAllocated||''))).join('<br>');
+      return `<td class="rpt-td rpt-td-data">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num">${allocCol}</td>`;
+    }).join('');
+
+    return `<tr>${fixedCells}${monthCells}</tr>`;
+  }).join('');
+
+  // Month selector
+  const monthOpts=MONTH_FULL.map((m,i)=>`<option value="${i}" ${i===R.month?'selected':''}>${m}</option>`).join('');
+  const curYear=new Date().getFullYear();
+  const yearOpts=[];for(let y=curYear-2;y<=curYear+2;y++)yearOpts.push(`<option value="${y}" ${y===R.year?'selected':''}>${y}</option>`);
+
+  return `
+    <div class="rpt-toolbar">
+      <span class="seg-badge ${seg}">${segLabel}</span>
+      <div class="rpt-month-selector">
+        <label>Select Month:</label>
+        <select data-action="rpt-month">${monthOpts}</select>
+        <select data-action="rpt-year">${yearOpts.join('')}</select>
+      </div>
+      <div class="rpt-search">
+        <input type="text" placeholder="Search code, user, name, group…" data-action="rpt-search" value="${esc(R.search)}">
+      </div>
+      <div class="rpt-count">${groupList.length} unique entries</div>
+    </div>
+    <div class="rpt-table-wrap">
+      <div class="rpt-scroll">
+        <table class="rpt-table">
+          <thead><tr>${fixedHdr}${monthHdr}</tr></thead>
+          <tbody>${bodyRows||`<tr><td colspan="${6+numMonths*3}" class="rpt-empty">No data found for this selection.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 /* ============================= MASTER "+ ADD" POPUP ============================= */
 const MASTER_ADD_FIELDS=[
   {k:'code',label:'Code'},{k:'userId',label:'User ID'},{k:'software',label:'Software'},
@@ -1174,6 +1303,15 @@ document.addEventListener('input',e=>{
   if(el.classList.contains('cell-error')&&el.value){el.classList.remove('cell-error');el.style.borderColor='';el.style.background='';}
   if(el.hasAttribute('data-a')||el.hasAttribute('data-b')){onEntryFieldInput(el);return;}
   if(el.hasAttribute('data-madd')){onMasterAddInput(el);return;}
+  if(el.getAttribute('data-action')==='rpt-search'){
+    S.report.search=el.value;
+    clearTimeout(filterTimer);
+    filterTimer=setTimeout(()=>{const pos=el.selectionStart;render();
+      const ag=document.querySelector('input[data-action="rpt-search"]');
+      if(ag){ag.focus();ag.setSelectionRange(pos,pos);}
+    },300);
+    return;
+  }
   if(el.getAttribute('data-action')==='filter'){
     const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');
     S.dt[t].filters[c]=el.value;
@@ -1189,6 +1327,8 @@ document.addEventListener('change',e=>{
   const el=e.target;
   if(el.tagName==='SELECT'&&(el.hasAttribute('data-a')||el.hasAttribute('data-b'))){onEntryFieldInput(el);return;}
   if(el.getAttribute('data-action')==='pagesize'){const t=el.getAttribute('data-table');S.dt[t].pageSize=parseInt(el.value,10);S.dt[t].page=1;render();}
+  if(el.getAttribute('data-action')==='rpt-month'){S.report.month=parseInt(el.value,10);render();}
+  if(el.getAttribute('data-action')==='rpt-year'){S.report.year=parseInt(el.value,10);render();}
 });
 
 document.addEventListener('click',e=>{
@@ -1290,6 +1430,8 @@ function render(){
     inner=`<div class="empty-state" style="padding-top:80px;"><div class="spinner" style="margin:0 auto 16px;"></div><div class="big">Loading data…</div><div style="margin-top:6px;">Aapka data background mein load ho raha hai, kuch seconds lagenge.</div></div>`;
   } else if(S.page==='entryEquity')inner=renderEntry('equity');
   else if(S.page==='entryCommodity')inner=renderEntry('commodity');
+  else if(S.page==='reportEquity')inner=renderReport('equity');
+  else if(S.page==='reportCommodity')inner=renderReport('commodity');
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
   app.innerHTML=renderShell(inner);
