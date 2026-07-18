@@ -19,7 +19,37 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;overflow:hidden;}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:13px;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;font-size:13px;transition:background .3s,color .3s;}
+html.dark{
+  --bg:#0C1017;--surface:#151B24;--ink:#E8E0D0;--ink-secondary:#A8A297;--muted:#6B6560;
+  --line:#2A2F38;--line-light:#1E2531;--accent:#C6952F;--accent-dark:#E8B84A;--accent-tint:#2A2518;--accent-tint2:#1A1710;
+  --danger:#EF5350;--danger-tint:#2A1515;--success:#4CAF50;--success-tint:#152A18;
+  --equity:#60A5FA;--equity-tint:#1A2540;--commodity:#C6952F;--commodity-tint:#2A2518;
+}
+html.dark .login-wrap{background:linear-gradient(145deg,#050810 0%,#0C1017 50%,#151B24 100%);}
+html.dark .login-card{background:var(--surface);box-shadow:0 40px 80px -30px rgba(0,0,0,.8);}
+html.dark .field input{background:#0C1017;border-color:var(--line);color:var(--ink);}
+html.dark .field input:focus{background:#0A0E14;border-color:var(--accent);}
+html.dark table.entry input{background:#0C1017;border-color:var(--line);color:var(--ink);}
+html.dark table.entry input:focus{background:#0A0E14;}
+html.dark .cell-ro{background:#1A1F28;border-color:#2A2F38;color:var(--ink-secondary);}
+html.dark .topbar{background:var(--surface);border-color:var(--line);}
+html.dark .entry-toolbar{background:var(--surface);border-color:var(--line);}
+html.dark .entry-panel{background:var(--surface);border-color:var(--line);}
+html.dark .dt-table-wrap,.html.dark .rpt-table-wrap{background:var(--surface);border-color:var(--line);}
+html.dark table.dt tbody td{border-color:var(--line-light);color:var(--ink);}
+html.dark table.dt tbody tr:nth-child(even){background:#0F141B;}
+html.dark table.dt tbody tr:hover{background:var(--accent-tint);}
+html.dark .dt-pagination{background:var(--surface);border-color:var(--line);}
+html.dark .btn-ghost{border-color:var(--line);color:var(--ink-secondary);}
+html.dark .btn-ghost:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-tint);}
+html.dark .topbar-controls{background:var(--surface);border-color:var(--line);}
+html.dark .modal-card{background:var(--surface);}
+html.dark .modal-body .field input{background:#0C1017;border-color:var(--line);color:var(--ink);}
+html.dark .rpt-table-wrap{background:var(--surface);border-color:var(--line);}
+html.dark table.rpt-table tbody td{border-color:var(--line-light);color:var(--ink);}
+html.dark table.rpt-table tbody tr:nth-child(even){background:#0F141B;}
+html.dark table.rpt-table tbody tr:hover{background:var(--accent-tint);}
 #app{height:100vh;}
 h1,h2,h3,.disp{font-family:'Space Grotesk',sans-serif;}
 input,select,button{font-family:inherit;font-size:13px;}
@@ -88,7 +118,12 @@ input,select,button{font-family:inherit;font-size:13px;}
 .seg-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:20px;}
 .seg-badge.equity{background:var(--equity-tint);color:var(--equity);}
 .seg-badge.commodity{background:var(--commodity-tint);color:var(--accent-dark);}
-.topbar-right{display:flex;align-items:center;gap:12px;}
+.topbar-right{display:flex;align-items:center;gap:10px;}
+.topbar-controls{display:flex;align-items:center;gap:4px;background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:2px 4px;}
+.topbar-controls button{border:none;background:transparent;cursor:pointer;padding:3px 6px;border-radius:4px;font-size:12px;color:var(--ink-secondary);font-weight:700;transition:all .12s;line-height:1;}
+.topbar-controls button:hover{background:var(--accent-tint);color:var(--accent-dark);}
+.topbar-controls button.active{background:var(--accent);color:#fff;}
+.topbar-controls .divider{width:1px;height:14px;background:var(--line);margin:0 2px;}
 .topbar-clock{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-secondary);background:var(--bg);padding:4px 8px;border-radius:6px;font-weight:500;}
 .topbar-welcome{font-size:11px;color:var(--ink-secondary);font-weight:500;}
 .topbar-welcome b{color:var(--ink);font-weight:600;}
@@ -299,9 +334,13 @@ let S = {
   colMenuOpen:null, entryWidths:{}, logoutAt:0, saving:false,
   masterAdd:null, // {seg, code, userId, software, name, group, branchName, error, saving}
   report:{month:new Date().getMonth(),year:new Date().getFullYear(),search:'',sort:null,sortDir:1,filter:'all',widths:{},monthSort:null,monthSortDir:1},
+  darkMode:false, fontSize:100,
 };
 try{ const ew=localStorage.getItem('margin_entry_widths'); if(ew) S.entryWidths=JSON.parse(ew); }catch(e){}
 try{ const rw=localStorage.getItem('margin_rpt_widths'); if(rw) S.report.widths=JSON.parse(rw); }catch(e){}
+// Restore theme + font size from localStorage
+try{ S.darkMode=localStorage.getItem('margin_dark_mode')==='true'; if(S.darkMode)document.documentElement.classList.add('dark'); }catch(e){}
+try{ const fs=parseInt(localStorage.getItem('margin_font_size'),10); if(fs>=70&&fs<=130){S.fontSize=fs;document.body.style.zoom=fs/100;} }catch(e){}
 function saveEntryWidths(){ try{ localStorage.setItem('margin_entry_widths',JSON.stringify(S.entryWidths)); }catch(e){} }
 function freshRows(){ S.entry={equity:freshSeg(),commodity:freshSeg()}; }
 
@@ -677,7 +716,7 @@ function renderShell(inner){
     <div class="main">
       <div class="topbar">
         <div class="topbar-left"><h2>${PAGE_TITLES[S.page]||'Dashboard'}</h2>${pageSeg?`<span class="seg-badge ${pageSeg}">${pageSeg}</span>`:''}</div>
-        <div class="topbar-right"><div class="topbar-clock" id="liveClock">--:--:--</div><div class="topbar-welcome">Welcome, <b>${esc(S.user.name)}</b></div><div class="avatar">${initials}</div></div>
+        <div class="topbar-right"><div class="topbar-controls"><button data-action="font-down" title="Smaller text">A-</button><button data-action="font-reset" title="Reset size">A</button><button data-action="font-up" title="Larger text">A+</button><span class="divider"></span><button data-action="toggle-theme" title="Toggle dark/light mode">${S.darkMode?'☀️':'🌙'}</button></div><div class="topbar-clock" id="liveClock">--:--:--</div><div class="topbar-welcome">Welcome, <b>${esc(S.user.name)}</b></div><div class="avatar">${initials}</div></div>
       </div>
       <div class="content">${inner}</div>
     </div>
@@ -1420,6 +1459,15 @@ document.addEventListener('click',e=>{
   const el=e.target.closest('[data-action]');if(!el)return;
   const a=el.getAttribute('data-action');
   if(a==='toggle-sidebar'){S.sidebarOpen=!S.sidebarOpen;render();return;}
+  if(a==='toggle-theme'){
+    S.darkMode=!S.darkMode;
+    document.documentElement.classList.toggle('dark',S.darkMode);
+    try{localStorage.setItem('margin_dark_mode',S.darkMode?'true':'false');}catch(e){}
+    render();return;
+  }
+  if(a==='font-up'){S.fontSize=Math.min(130,S.fontSize+10);document.body.style.zoom=(S.fontSize/100);try{localStorage.setItem('margin_font_size',String(S.fontSize));}catch(e){}return;}
+  if(a==='font-down'){S.fontSize=Math.max(70,S.fontSize-10);document.body.style.zoom=(S.fontSize/100);try{localStorage.setItem('margin_font_size',String(S.fontSize));}catch(e){}return;}
+  if(a==='font-reset'){S.fontSize=100;document.body.style.zoom=1;try{localStorage.setItem('margin_font_size','100');}catch(e){}return;}
   if(a==='nav'){navigateTo(el.getAttribute('data-page'));return;}
   if(a==='logout'){S.user=null;S.page=null;S.sidebarOpen=false;S.logoutAt=0;render();return;}
   if(a==='syncnow'){refreshData();return;}
