@@ -33,7 +33,8 @@ var SHEETS = {
   respEquity:   'RESPONSES EQUITY',
   respComm:     'RESPONSES COMODDITY',
   resp2Equity:  'RESPONSES 2 EQUITY',
-  resp2Comm:    'RESPONSES 2 COMODDITY'
+  resp2Comm:    'RESPONSES 2 COMODDITY',
+  matRecResp:   'MATERIAL REC RESPONSES'
 };
 
 function doGet(e) {
@@ -89,13 +90,55 @@ function mapResp1_(rows) {
       timestamp: fmtTimestamp_(r['TIMESTAMP']), date: fmtDateOnly_(r['SELECT DATE']),
       code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '',
       group: r['GROUP NAME'] || '', marginRMS: fmtValue_(r['MARGIN AS PER RMS']), marginAllocated: fmtValue_(r['MARGIN ALLOCATED ON ID']),
-      loginName: r['LOGIN NAME'] || ''
+      branchName: r['BRANCH NAME'] || '', loginName: r['LOGIN NAME'] || ''
     };
   });
 }
 function mapResp2_(rows) {
   return rows.map(function (r) {
     return { timestamp: fmtTimestamp_(r['TIMESTAMP']), date: fmtDateOnly_(r['SELECT DATE']), group: r['GROUP NAME'] || '', margin: fmtValue_(r['GROUP MARGIN']), loginName: r['LOGIN NAME'] || '' };
+  });
+}
+
+function mapMatRec_(rows) {
+  return rows.map(function (r) {
+    return {
+      timestamp: fmtTimestamp_(r['TIMESTAMP']),
+      poNo: fmtValue_(r['PO NO']),
+      invoiceUpload: fmtValue_(r['INVOICE UPLOAD']),
+      vendorName: fmtValue_(r['VENDOR NAME']),
+      pendingQtyTop: fmtValue_(r['PENDING QTY']),
+      invQty: fmtValue_(r['INV QTY']),
+      dueDate: fmtDateOnly_(r['DUE DATE']),
+      bandel: fmtValue_(r['BANDEL']),
+      addressGst: fmtValue_(r['ADDRESS & GST NUMBER VERIFICATION']),
+      ewayBill: fmtValue_(r['EWAY BILL VERIFICATION']),
+      lrBillVerified: fmtValue_(r['LR BILL VERIFIED']),
+      invoiceNumber: fmtValue_(r['Invoice number']),
+      invoiceDate: fmtDateOnly_(r['invoice date']),
+      ewayBillImage: fmtValue_(r['EWAY BILL VERIFICATION IMAGE']),
+      changeBrand: fmtValue_(r['CHANGE BRAND']),
+      brand: fmtValue_(r['BRAND']),
+      salesOrderId: fmtValue_(r['SALES ORDER ID']),
+      itemName: fmtValue_(r['ITEM NAME']),
+      pendingQty: fmtValue_(r['PENDING QTY']),
+      recQty: fmtValue_(r['REC QTY']),
+      cancelQty: fmtValue_(r['CANCEL QTY']),
+      poRate: fmtValue_(r['PO RATE']),
+      size: fmtValue_(r['SIZE']),
+      unit: fmtValue_(r['UNIT']),
+      invoiceRate: fmtValue_(r['INVOICE RATE']),
+      inwardBatchNo: fmtValue_(r['INWARD BATCH NO']),
+      grossWeight: fmtValue_(r['GROSS WEIGHT']),
+      remarks: fmtValue_(r['REMARKS']),
+      newUniqueNo: fmtValue_(r['NEW UNIQUE NO']),
+      outwardBatchNo: fmtValue_(r['OUTWARD BATCH NO']),
+      matRecImage: fmtValue_(r['MATRIAL REC IMAGE MULTIPLE IMAGE']),
+      recQtyCalc: fmtValue_(r['REC QTY']),
+      pendQtyCalc: fmtValue_(r['PEND QTY']),
+      status: fmtValue_(r['STATUS']),
+      loginName: fmtValue_(r['LOGIN NAME'] || r['LOGIN ID'] || '')
+    };
   });
 }
 // Reads a header value tolerating alternate spellings. The comparison is case-insensitive
@@ -129,7 +172,9 @@ function mapUser_(r) {
     resp2Commodity:  isYes_(pick_(r, ['RESPONSES 2 COMODDITY', 'RESPONSES 2 COMMODITY'])),
     masterEquityAdd:    isYes_(pick_(r, ['MASTER EQUITY ADD ENTRY', 'MATER EQUITY ADD ENTRY'])),
     masterCommodityAdd: isYes_(pick_(r, ['MASTER COMODDITY ADD ENTRY', 'MATER COMODDITY ADD ENTRY', 'MASTER COMMODITY ADD ENTRY', 'MATER COMMODITY ADD ENTRY'])),
-    report:             isYes_(pick_(r, ['REPORT']))
+    report:             isYes_(pick_(r, ['REPORT'])),
+    matRecView:         isYes_(pick_(r, ['MATERIAL RECEIVED VIEW ENTRY'])),
+    matRecAdd:          isYes_(pick_(r, ['MATERIAL ENTRY ADD']))
   };
 }
 
@@ -165,6 +210,7 @@ function getBootstrapData(perms) {
   var needRespComm    = loadAll || perms.resp1Commodity || perms.report;
   var needResp2Eq     = loadAll || perms.resp2Equity;
   var needResp2Comm   = loadAll || perms.resp2Commodity;
+  var needMatRec      = loadAll || perms.matRecView || perms.matRecAdd;
 
   var result = {
     masterEquity:    needMasterEq   ? mapMaster_(sheetToObjects_(SHEETS.masterEquity)) : [],
@@ -173,6 +219,7 @@ function getBootstrapData(perms) {
     respCommodity:   needRespComm  ? mapResp1_(sheetToObjects_(SHEETS.respComm))       : [],
     resp2Equity:     needResp2Eq   ? mapResp2_(sheetToObjects_(SHEETS.resp2Equity))    : [],
     resp2Commodity:  needResp2Comm ? mapResp2_(sheetToObjects_(SHEETS.resp2Comm))      : [],
+    matRecResp:      needMatRec    ? mapMatRec_(sheetToObjects_(SHEETS.matRecResp))    : [],
     users:           sheetToObjects_(SHEETS.login).map(mapUser_),
     missingSheets:   []
   };
@@ -271,6 +318,88 @@ function saveEntries(payload) {
     }
 
     return { status: 'ok', savedA: savedA, savedB: savedB, segment: seg };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+
+/**
+ * Save Material Received entries.
+ * payload = { topFields:{...}, rows:[{...},...] }
+ * Each row is saved as a separate row in MATERIAL REC RESPONSES with the top fields repeated.
+ * Column order: TIMESTAMP | PO NO | INVOICE UPLOAD | VENDOR NAME | PENDING QTY | INV QTY |
+ *   DUE DATE | BANDEL | ADDRESS & GST NUMBER VERIFICATION | EWAY BILL VERIFICATION |
+ *   LR BILL VERIFIED | Invoice number | invoice date | EWAY BILL VERIFICATION IMAGE |
+ *   CHANGE BRAND | BRAND | SALES ORDER ID | ITEM NAME | PENDING QTY | REC QTY | CANCEL QTY |
+ *   PO RATE | SIZE | UNIT | INVOICE RATE | INWARD BATCH NO | GROSS WEIGHT | REMARKS |
+ *   NEW UNIQUE NO | OUTWARD BATCH NO | MATRIAL REC IMAGE MULTIPLE IMAGE | LOGIN NAME
+ */
+function saveMatRecEntries(payload) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    if (!payload) return { status: 'error', message: 'No data received.' };
+
+    // Permission check
+    var perms = getUserPermissions(payload.loginId || '');
+    if (!perms || !perms.matRecAdd) return { status: 'error', message: 'You do not have permission to add Material Received entries.' };
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName(SHEETS.matRecResp);
+    if (!sh) return { status: 'error', message: 'Sheet not found: ' + SHEETS.matRecResp };
+
+    var top = payload.topFields || {};
+    var rows = payload.rows || [];
+    if (!rows.length) return { status: 'error', message: 'No item rows to save.' };
+
+    var now = new Date();
+    var ts = fmtTimestamp_(now);
+    var loginName = payload.loginName || '';
+
+    var dataRows = rows.map(function (r) {
+      return [
+        ts,
+        top.poNo || '',
+        top.invoiceUpload || '',
+        top.vendorName || '',
+        top.pendingQtyTop || '',
+        top.invQty || '',
+        top.dueDate || '',
+        top.bandel || '',
+        top.addressGst || '',
+        top.ewayBill || '',
+        top.lrBillVerified || '',
+        top.invoiceNumber || '',
+        top.invoiceDate || '',
+        top.ewayBillImage || '',
+        r.changeBrand || '',
+        r.brand || '',
+        r.salesOrderId || '',
+        r.itemName || '',
+        r.pendingQty || '',
+        r.recQty || '',
+        r.cancelQty || '',
+        r.poRate || '',
+        r.size || '',
+        r.unit || '',
+        r.invoiceRate || '',
+        r.inwardBatchNo || '',
+        r.grossWeight || '',
+        r.remarks || '',
+        r.newUniqueNo || '',
+        r.outwardBatchNo || '',
+        r.matRecImage || '',
+        loginName
+      ];
+    });
+
+    sh.getRange(sh.getLastRow() + 1, 1, dataRows.length, 32).setValues(dataRows);
+
+    return { status: 'ok', saved: dataRows.length };
   } catch (err) {
     return { status: 'error', message: err.message };
   } finally {
