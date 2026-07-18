@@ -49,7 +49,10 @@ function sheetToObjects_(name) {
   if (!sh) return [];
   var data = sh.getDataRange().getValues();
   if (data.length < 2) return [];
-  var headers = data[0].map(function (h) { return String(h).trim(); });
+  // Normalize header text: collapse any internal whitespace (including newlines from
+  // wrapped cells) into single spaces so that "MATER\nEQUITY\nADD ENTRY" matches
+  // the expected key "MATER EQUITY ADD ENTRY".
+  var headers = data[0].map(function (h) { return String(h).replace(/\s+/g, ' ').trim(); });
   return data.slice(1)
     .filter(function (row) { return row.some(function (c) { return c !== ''; }); })
     .map(function (row) {
@@ -245,7 +248,7 @@ function saveEntries(payload) {
       savedB = rowsB.length;
     }
 
-    CacheService.getScriptCache().remove('bootstrap_v3');
+    CacheService.getScriptCache().remove('bootstrap_v4');
     return { status: 'ok', savedA: savedA, savedB: savedB, segment: seg };
   } catch (err) {
     return { status: 'error', message: err.message };
