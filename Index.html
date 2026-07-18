@@ -251,8 +251,14 @@ async function loadAll(){
 async function refreshData(){
   S.syncing=true;render();
   try{
-    applyBootstrap(await runServer('getBootstrapData'));
-    if(S.user){const f=S.users.find(u=>u.id.toLowerCase()===S.user.id.toLowerCase());if(f)S.user=f;
+    // forceFresh=true bypasses the server's 60s bootstrap cache — "Refresh from Sheet"
+    // should always mean "give me the LATEST sheet data right now", not a stale copy.
+    applyBootstrap(await runServer('getBootstrapData',true));
+    if(S.user){
+      // Pull THIS user's permissions live/uncached too, so a just-added YES (e.g. Master
+      // Add Entry) shows up immediately on Refresh instead of waiting for cache to expire.
+      const fresh=await runServer('getUserPermissions',S.user.id);
+      if(fresh)S.user=Object.assign({},S.user,fresh);
       const pk=NAV_ITEMS.find(n=>n.key===S.page)?.perm;
       if(pk&&!S.user[pk])S.page=firstAllowedPage();
     }
@@ -455,10 +461,22 @@ function renderLogin(){
   </div></div>`;
 }
 function firstAllowedPage(){ const f=NAV_ITEMS.find(n=>S.user&&S.user[n.perm]); return f?f.key:null; }
-function doLogin(id,pw){
+async function doLogin(id,pw){
   const u=S.users.find(x=>x.id.toLowerCase()===id.trim().toLowerCase()&&String(x.password)===pw);
   if(!u){S.loginError="Invalid user ID or password.";render();return;}
   S.user=u;S.loginError="";S.sidebarOpen=false;S.logoutAt=nextLogoutTs();S.page=firstAllowedPage();render();
+  // The bootstrap data (incl. this user's permissions) can be up to 60s stale because it's
+  // cached script-wide. Immediately pull this user's permissions LIVE from the sheet (no
+  // cache) so a just-added YES (e.g. Master Add Entry permission) takes effect on login,
+  // not up to a minute later.
+  try{
+    const fresh=await runServer('getUserPermissions',S.user.id);
+    if(fresh){
+      S.user=Object.assign({},S.user,fresh);
+      S.page=firstAllowedPage();
+      render();
+    }
+  }catch(e){}
 }
 
 /* ============================= NAV ============================= */

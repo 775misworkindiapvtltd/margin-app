@@ -130,10 +130,12 @@ function getUserPermissions(id) {
   return u;
 }
 
-function getBootstrapData() {
+function getBootstrapData(forceFresh) {
   var cache = CacheService.getScriptCache();
-  var cached = cache.get('bootstrap_v4');
-  if (cached) { try { return JSON.parse(cached); } catch (e) {} }
+  if (!forceFresh) {
+    var cached = cache.get('bootstrap_v4');
+    if (cached) { try { return JSON.parse(cached); } catch (e) {} }
+  }
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
