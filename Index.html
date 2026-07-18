@@ -220,6 +220,9 @@ table.dt tbody tr:hover{background:var(--accent-tint2);}
 .modal-body .field input.cell-error{border-color:var(--danger);background:#FEF2F2;}
 .modal-error{background:var(--danger-tint);color:var(--danger);font-size:12px;padding:9px 12px;border-radius:8px;margin-bottom:14px;font-weight:500;}
 .modal-foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex:none;}
+
+.saving-overlay{position:fixed;inset:0;background:rgba(12,16,23,.35);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(1px);}
+.saving-overlay .saving-box{background:var(--surface);border-radius:12px;padding:24px 36px;box-shadow:0 20px 50px rgba(0,0,0,.25);display:flex;align-items:center;gap:14px;font-size:14px;font-weight:600;color:var(--ink);}
 </style>
 </head>
 <body>
@@ -452,6 +455,17 @@ function parseDT(v){
   const t=Date.parse(s);return isNaN(t)?null:t;
 }
 function isDateColumn(key){ return key==='timestamp'||key==='date'; }
+// Full-screen saving overlay — blocks ALL interaction while save is in progress
+function showSavingOverlay(msg){
+  let el=document.getElementById('savingOverlay');
+  if(!el){el=document.createElement('div');el.id='savingOverlay';document.body.appendChild(el);}
+  el.className='saving-overlay';
+  el.innerHTML=`<div class="saving-box"><span class="spinner"></span>${esc(msg||'Saving…')}</div>`;
+}
+function hideSavingOverlay(){
+  const el=document.getElementById('savingOverlay');if(el)el.remove();
+}
+
 function showToast(msg,isErr,noRender){
   S.toast={msg,isErr};
   if(!noRender){render();}
@@ -788,17 +802,19 @@ async function submitEntry(){
   const newA=validA.map(r=>({timestamp:ts,date:disp,code:r.code,userId:r.userId,software:r.software,name:r.name,group:r.group,marginRMS:r.marginRMS,marginAllocated:r.marginAllocated,branchName:r.branchName,loginName:loginName}));
   const newB=validB.map(r=>({timestamp:ts,date:disp,group:r.group,margin:r.margin,loginName:loginName}));
 
-  // Show loading spinner
+  // Show loading spinner + full-screen block
   S.saving=true;render();
+  showSavingOverlay('Saving entries…');
   try{
     const result=await runServer('saveEntries',{segment:seg,responses1:newA,responses2:newB});
     S.saving=false;
+    hideSavingOverlay();
     if(result.status!=='ok'){showToast("Save failed: "+(result.message||'unknown error'),true);return;}
     if(seg==='equity'){S.respEquity.push(...newA);S.resp2Equity.push(...newB);}
     else{S.respCommodity.push(...newA);S.resp2Commodity.push(...newB);}
     S.entry[seg]=freshSeg();
     showToast(`Saved ${result.savedA} entry row(s) and ${result.savedB} group row(s) to ${seg==='equity'?'Equity':'Commodity'} sheets.`,false);
-  }catch(err){S.saving=false;showToast("Save failed: "+err.message,true);}
+  }catch(err){S.saving=false;hideSavingOverlay();showToast("Save failed: "+err.message,true);}
 }
 
 /* ============================= DATA TABLES ============================= */
@@ -983,16 +999,18 @@ async function saveMasterAdd(){
   const missing=MASTER_ADD_FIELDS.some(f=>!String(M[f.k]||'').trim());
   if(missing){M.showErrors=true;M.error="Sabhi 6 fields bharna zaroori hai.";rerenderModal();return;}
   M.error="";M.saving=true;rerenderModal();
+  showSavingOverlay('Saving master entry…');
   try{
     const result=await runServer('addMasterEntry',{
       segment:M.seg,code:M.code,userId:M.userId,software:M.software,name:M.name,group:M.group,branchName:M.branchName,loginId:S.user.id
     });
+    hideSavingOverlay();
     if(result.status!=='ok'){M.saving=false;M.error=result.message||'Save failed.';rerenderModal();return;}
     if(M.seg==='commodity')S.masterCommodity.push(result.row);else S.masterEquity.push(result.row);
     closeMasterAdd();
     render(); // refresh the table to show the new row
     showToast("Master entry added successfully.",false);
-  }catch(err){M.saving=false;M.error=err.message;rerenderModal();}
+  }catch(err){hideSavingOverlay();M.saving=false;M.error=err.message;rerenderModal();}
 }
 
 /* ============================= DATE RANGE PICKER (Table Filter) ============================= */
