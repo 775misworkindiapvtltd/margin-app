@@ -94,7 +94,7 @@ function mapResp1_(rows) {
       timestamp: fmtTimestamp_(r['TIMESTAMP']), date: fmtDateOnly_(r['SELECT DATE']),
       code: r['CODE'] || '', userId: r['USER ID'] || '', software: r['SOFTWARE'] || '', name: r['NAME'] || '',
       group: r['GROUP NAME'] || '', marginRMS: fmtValue_(r['MARGIN AS PER RMS']), marginAllocated: fmtValue_(r['MARGIN ALLOCATED ON ID']),
-      loginName: r['LOGIN NAME'] || ''
+      branchName: r['BRANCH NAME'] || '', loginName: r['LOGIN NAME'] || ''
     };
   });
 }

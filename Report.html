@@ -6,14 +6,25 @@ const MONTH_FULL=["January","February","March","April","May","June","July","Augu
 function renderReport(seg){
   const segLabel=seg==='commodity'?'Commodity':'Equity';
   const data=seg==='commodity'?S.respCommodity:S.respEquity;
+  const resp2Data=seg==='commodity'?S.resp2Commodity:S.resp2Equity;
   const R=S.report;
   const numMonths=4;
 
   let groups={};
   data.forEach(row=>{
     const key=`${row.code}|||${row.userId}|||${row.software}|||${row.name}|||${row.group}`;
-    if(!groups[key]) groups[key]={code:row.code,userId:row.userId,software:row.software,name:row.name,group:row.group,entries:[]};
+    if(!groups[key]) groups[key]={code:row.code,userId:row.userId,software:row.software,name:row.name,group:row.group,branchName:row.branchName||'',entries:[]};
     groups[key].entries.push(row);
+    // Keep branchName from latest entry if available
+    if(row.branchName && !groups[key].branchName) groups[key].branchName=row.branchName;
+  });
+
+  // Build a lookup of resp2 entries indexed by group name for quick access
+  let resp2ByGroup={};
+  resp2Data.forEach(row=>{
+    const g=row.group||'';
+    if(!resp2ByGroup[g]) resp2ByGroup[g]=[];
+    resp2ByGroup[g].push(row);
   });
 
   const months=[];
@@ -30,7 +41,7 @@ function renderReport(seg){
     groupList=groupList.filter(g=>
       g.code.toLowerCase().includes(q)||g.userId.toLowerCase().includes(q)||
       g.software.toLowerCase().includes(q)||g.name.toLowerCase().includes(q)||
-      g.group.toLowerCase().includes(q)
+      g.group.toLowerCase().includes(q)||g.branchName.toLowerCase().includes(q)
     );
   }
 
@@ -53,7 +64,7 @@ function renderReport(seg){
   }
 
 
-  const RPT_FIXED_COLS=[{k:'code',l:'Code',def:90},{k:'userId',l:'User ID',def:90},{k:'software',l:'Software',def:80},{k:'name',l:'Name',def:200},{k:'group',l:'Group Name',def:120,last:true}];
+  const RPT_FIXED_COLS=[{k:'code',l:'Code',def:90},{k:'userId',l:'User ID',def:90},{k:'software',l:'Software',def:80},{k:'name',l:'Name',def:200},{k:'group',l:'Group Name',def:120},{k:'branchName',l:'Branch Name',def:110,last:true}];
   const fixedHdr=`<th class="rpt-th-fixed" rowspan="2" style="cursor:default;width:32px;min-width:32px;">S.No</th>`+RPT_FIXED_COLS.map(c=>{
     const si=R.sort===c.k?(R.sortDir===1?'▲':'▼'):'';
     const w=R.widths[c.k]||c.def;
@@ -61,7 +72,7 @@ function renderReport(seg){
   }).join('');
   const monthHdrRow1=months.map((mo,mi)=>{
     const bc=mi>0?' rpt-month-border':'';
-    return `<th class="rpt-th-month-top${bc}" colspan="3">${mo.label}</th>`;
+    return `<th class="rpt-th-month-top${bc}" colspan="4">${mo.label}</th>`;
   }).join('');
   const monthHdrRow2=months.map((mo,mi)=>{
     const rmsSort=R.monthSort===`rms_${mi}`?(R.monthSortDir===1?' ▲':' ▼'):'';
@@ -70,7 +81,8 @@ function renderReport(seg){
     const wDate=R.widths[`date_${mi}`]||80;
     const wRms=R.widths[`rms_${mi}`]||80;
     const wAlloc=R.widths[`alloc_${mi}`]||80;
-    return `<th class="rpt-th-month-sub${bc}" style="width:${wDate}px;">Date<div class="rpt-resize" data-action="rpt-resize" data-col="date_${mi}"></div></th><th class="rpt-th-month-sub" style="width:${wRms}px;" data-action="rpt-sort-month" data-col="rms_${mi}">Margin RMS${rmsSort}<div class="rpt-resize" data-action="rpt-resize" data-col="rms_${mi}"></div></th><th class="rpt-th-month-sub" style="width:${wAlloc}px;" data-action="rpt-sort-month" data-col="alloc_${mi}">Margin ON ID${allocSort}<div class="rpt-resize" data-action="rpt-resize" data-col="alloc_${mi}"></div></th>`;
+    const wGrpM=R.widths[`grpm_${mi}`]||120;
+    return `<th class="rpt-th-month-sub${bc}" style="width:${wDate}px;">Date<div class="rpt-resize" data-action="rpt-resize" data-col="date_${mi}"></div></th><th class="rpt-th-month-sub" style="width:${wRms}px;" data-action="rpt-sort-month" data-col="rms_${mi}">Margin RMS${rmsSort}<div class="rpt-resize" data-action="rpt-resize" data-col="rms_${mi}"></div></th><th class="rpt-th-month-sub" style="width:${wAlloc}px;" data-action="rpt-sort-month" data-col="alloc_${mi}">Margin ON ID${allocSort}<div class="rpt-resize" data-action="rpt-resize" data-col="alloc_${mi}"></div></th><th class="rpt-th-month-sub" style="width:${wGrpM}px;">Group Margin<div class="rpt-resize" data-action="rpt-resize" data-col="grpm_${mi}"></div></th>`;
   }).join('');
 
   RPT_FIXED_COLS.forEach(c=>{
@@ -99,19 +111,38 @@ function renderReport(seg){
 
 
   const bodyRows=groupList.map((g,idx)=>{
-    const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td rpt-group-end">${esc(g.group)}</td>`;
+    const fixedCells=`<td class="rpt-td-sno">${idx+1}</td><td class="rpt-td-code"><span class="code-pill">${esc(g.code)}</span></td><td class="rpt-td">${esc(g.userId)}</td><td class="rpt-td">${esc(g.software)}</td><td class="rpt-td rpt-td-name">${esc(g.name)}</td><td class="rpt-td">${esc(g.group)}</td><td class="rpt-td rpt-group-end">${esc(g.branchName)}</td>`;
+
+    // Get resp2 entries for this group
+    const grpResp2=resp2ByGroup[g.group]||[];
 
     const monthCells=months.map((mo,mi)=>{
       const mEntries=g.entries.filter(e=>{
         const d=parseDT(e.timestamp)||parseDT(e.date);if(!d)return false;
         const dt=new Date(d);return dt.getMonth()===mo.m&&dt.getFullYear()===mo.y;
       });
+      // Group Margin from Responses 2 for this group in this month
+      const grpMEntries=grpResp2.filter(e=>{
+        const d=parseDT(e.timestamp)||parseDT(e.date);if(!d)return false;
+        const dt=new Date(d);return dt.getMonth()===mo.m&&dt.getFullYear()===mo.y;
+      });
       const borderCls=mi>0?' rpt-month-border':'';
-      if(!mEntries.length) return `<td class="rpt-td rpt-td-empty${borderCls}"></td><td class="rpt-td rpt-td-empty"></td><td class="rpt-td rpt-td-empty"></td>`;
+
+      // Group Margin cell: show date - margin pairs
+      let grpMHtml='';
+      if(grpMEntries.length){
+        grpMHtml=grpMEntries.map(e=>{
+          const d=e.date||'';
+          const m=e.margin||'';
+          return esc(d)+' - '+esc(String(m));
+        }).join('<br>');
+      }
+
+      if(!mEntries.length && !grpMEntries.length) return `<td class="rpt-td rpt-td-empty${borderCls}"></td><td class="rpt-td rpt-td-empty"></td><td class="rpt-td rpt-td-empty"></td><td class="rpt-td rpt-td-empty"></td>`;
       const dateCol=mEntries.map(e=>esc(e.date||'')).join('<br>');
       const rmsCol=mEntries.map(e=>esc(String(e.marginRMS||''))).join('<br>');
       const allocCol=mEntries.map(e=>esc(String(e.marginAllocated||''))).join('<br>');
-      return `<td class="rpt-td rpt-td-data${borderCls}">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num">${allocCol}</td>`;
+      return `<td class="rpt-td rpt-td-data${borderCls}">${dateCol}</td><td class="rpt-td rpt-td-num">${rmsCol}</td><td class="rpt-td rpt-td-num">${allocCol}</td><td class="rpt-td rpt-td-data">${grpMHtml}</td>`;
     }).join('');
 
     return `<tr>${fixedCells}${monthCells}</tr>`;
@@ -140,7 +171,7 @@ function renderReport(seg){
       <div class="rpt-scroll">
         <table class="rpt-table">
           <thead><tr>${fixedHdr}${monthHdrRow1}</tr><tr>${monthHdrRow2}</tr></thead>
-          <tbody>${bodyRows||`<tr><td colspan="${6+numMonths*3}" class="rpt-empty">No data found for this selection.</td></tr>`}</tbody>
+          <tbody>${bodyRows||`<tr><td colspan="${7+numMonths*4}" class="rpt-empty">No data found for this selection.</td></tr>`}</tbody>
         </table>
       </div>
     </div>`;
