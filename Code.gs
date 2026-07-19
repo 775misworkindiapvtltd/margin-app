@@ -168,8 +168,8 @@ function getBootstrapData(perms) {
   var needMasterComm  = loadAll || perms.commodityEntry || perms.masterCommodity || perms.masterCommodityAdd;
   var needRespEq      = loadAll || perms.resp1Equity || perms.report;
   var needRespComm    = loadAll || perms.resp1Commodity || perms.report;
-  var needResp2Eq     = loadAll || perms.resp2Equity;
-  var needResp2Comm   = loadAll || perms.resp2Commodity;
+  var needResp2Eq     = loadAll || perms.resp2Equity || perms.report;
+  var needResp2Comm   = loadAll || perms.resp2Commodity || perms.report;
 
   var result = {
     masterEquity:    needMasterEq   ? mapMaster_(sheetToObjects_(SHEETS.masterEquity)) : [],
