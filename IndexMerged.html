@@ -875,6 +875,13 @@ function render(){
   if(!S.ready){app.innerHTML=`<div class="loading-screen"><div class="spinner"></div><div>Loading margin data…</div></div>`;return;}
   if(S.loadError){app.innerHTML=`<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="login-eyebrow">Setup</div><h1>Sheet load failed</h1></div><div class="login-body"><div class="login-error">${esc(S.loadError)}</div><div class="login-hint">1) Open via the Apps Script <b>/exec</b> URL. 2) Required tabs: LOGIN PAGE, MASTER EQUITY, MASTER COMODDITY, RESPONSES EQUITY, RESPONSES COMODDITY, RESPONSES 2 EQUITY, RESPONSES 2 COMODDITY. 3) Deploy access = "Anyone".</div><button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="syncnow">Retry</button></div></div></div>`;return;}
   if(!S.user){app.innerHTML=renderLogin();return;}
+  // Save scroll positions before re-render
+  const rptScroll=document.querySelector('.rpt-scroll');
+  const dtScroll=document.querySelector('.dt-scroll');
+  const savedRptScrollLeft=rptScroll?rptScroll.scrollLeft:0;
+  const savedRptScrollTop=rptScroll?rptScroll.scrollTop:0;
+  const savedDtScrollLeft=dtScroll?dtScroll.scrollLeft:0;
+  const savedDtScrollTop=dtScroll?dtScroll.scrollTop:0;
   let inner="";
   if(S.syncing && !S.masterEquity.length && !S.respEquity.length){
     inner=`<div class="empty-state" style="padding-top:80px;"><div class="spinner" style="margin:0 auto 16px;"></div><div class="big">Loading data…</div><div style="margin-top:6px;">Aapka data background mein load ho raha hai, kuch seconds lagenge.</div></div>`;
@@ -885,6 +892,11 @@ function render(){
   else if(TABLE_DEFS[S.page])inner=renderDataTable(S.page);
   else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein <b>MARGIN</b> pe click karke apna page choose karein.</div>`;
   app.innerHTML=renderShell(inner);
+  // Restore scroll positions after re-render
+  const rptScroll2=document.querySelector('.rpt-scroll');
+  const dtScroll2=document.querySelector('.dt-scroll');
+  if(rptScroll2){rptScroll2.scrollLeft=savedRptScrollLeft;rptScroll2.scrollTop=savedRptScrollTop;}
+  if(dtScroll2){dtScroll2.scrollLeft=savedDtScrollLeft;dtScroll2.scrollTop=savedDtScrollTop;}
   if(S.page==='entryEquity'||S.page==='entryCommodity')initEntryDatePicker();
 }
 
