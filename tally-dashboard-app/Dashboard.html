@@ -1,0 +1,137 @@
+<script>
+/* ============================= DASHBOARD ============================= */
+function sumBy(arr,key){ return arr.reduce((s,r)=>s+(Number(r[key])||0),0); }
+
+function topN(arr,groupKey,amtKey,n){
+  const map={};
+  arr.forEach(r=>{
+    const k=r[groupKey]||'Unknown';
+    map[k]=(map[k]||0)+(Number(r[amtKey])||0);
+  });
+  return Object.keys(map).map(k=>({label:k,value:map[k]})).sort((a,b)=>b.value-a.value).slice(0,n);
+}
+
+function renderDashboard(){
+  const totalReceivable=sumBy(S.receivables,'pendingAmount');
+  const totalPayable=sumBy(S.payables,'closingBalance');
+  const totalExpense=sumBy(S.expense,'amount');
+  const net=totalReceivable-totalPayable;
+
+  const overdueRecv=S.receivables.filter(r=>Number(r.overdueDays)>0);
+  const overduePay=S.payables.filter(r=>Number(r.overdueDays)>0);
+
+  const topRecvParties=topN(S.receivables,'partyName','pendingAmount',5);
+  const topPayParties=topN(S.payables,'partyName','closingBalance',5);
+  const maxRecv=Math.max(1,...topRecvParties.map(x=>x.value));
+  const maxPay=Math.max(1,...topPayParties.map(x=>x.value));
+
+  const recentReceipts=S.receipt.slice().sort((a,b)=>(parseDT(b.date)||0)-(parseDT(a.date)||0)).slice(0,5);
+  const recentPayments=S.payment.slice().sort((a,b)=>(parseDT(b.date)||0)-(parseDT(a.date)||0)).slice(0,5);
+
+  function ageingBuckets(rows){
+    const buckets={'0-30':0,'31-60':0,'61-90':0,'91-180':0,'180+':0};
+    rows.forEach(r=>{
+      const d=Number(r.overdueDays)||0;
+      const amt=Number(r.pendingAmount!=null?r.pendingAmount:r.closingBalance)||0;
+      if(d<=30)buckets['0-30']+=amt;
+      else if(d<=60)buckets['31-60']+=amt;
+      else if(d<=90)buckets['61-90']+=amt;
+      else if(d<=180)buckets['91-180']+=amt;
+      else buckets['180+']+=amt;
+    });
+    return buckets;
+  }
+  const recvAge=ageingBuckets(S.receivables);
+
+  return `
+    <div class="dash-grid">
+      <div class="card" data-action="goto" data-page="receivables">
+        <div class="card-top"><span class="card-label">Receivables</span><div class="card-icon recv">${NAV_ICONS.in}</div></div>
+        <div class="card-value">${fmtINR(totalReceivable)}</div>
+        <div class="card-sub">${S.receivables.length} open bills${overdueRecv.length?` · <span class="up">${overdueRecv.length} overdue</span>`:''}</div>
+      </div>
+      <div class="card" data-action="goto" data-page="payables">
+        <div class="card-top"><span class="card-label">Payables</span><div class="card-icon pay">${NAV_ICONS.out}</div></div>
+        <div class="card-value">${fmtINR(totalPayable)}</div>
+        <div class="card-sub">${S.payables.length} open bills${overduePay.length?` · <span class="up">${overduePay.length} overdue</span>`:''}</div>
+      </div>
+      <div class="card" data-action="goto" data-page="expense">
+        <div class="card-top"><span class="card-label">Total Expense</span><div class="card-icon exp">${NAV_ICONS.wallet}</div></div>
+        <div class="card-value">${fmtINR(totalExpense)}</div>
+        <div class="card-sub">${S.expense.length} voucher lines</div>
+      </div>
+      <div class="card" data-action="goto" data-page="overdue">
+        <div class="card-top"><span class="card-label">Net Position</span><div class="card-icon net">${NAV_ICONS.clock}</div></div>
+        <div class="card-value">${fmtINR(net)}</div>
+        <div class="card-sub ${net>=0?'down':'up'}">${net>=0?'Receivable > Payable':'Payable > Receivable'}</div>
+      </div>
+    </div>
+
+    <div class="dash-row">
+      <div class="panel">
+        <div class="panel-title">Top Receivable Parties <a data-action="goto" data-page="receivables">View all →</a></div>
+        <div class="panel-body">
+          <div class="bar-chart">
+          ${topRecvParties.length?topRecvParties.map(p=>`
+            <div class="bar-item">
+              <div class="b-label" title="${esc(p.label)}">${esc(p.label)}</div>
+              <div class="bar-track"><div class="bar-fill recv" style="width:${Math.max(4,(p.value/maxRecv*100))}%;"></div></div>
+              <div class="b-val">${fmtINR(p.value)}</div>
+            </div>`).join(''):`<div class="empty-state"><div class="big">No receivables</div></div>`}
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Ageing Snapshot — Receivables <a data-action="goto" data-page="overdue">Details →</a></div>
+        <div class="panel-body">
+          <div class="age-buckets">
+            <div class="age-bucket"><div class="ab-label">0-30d</div><div class="ab-val">${fmtINR(recvAge['0-30'])}</div></div>
+            <div class="age-bucket"><div class="ab-label">31-60d</div><div class="ab-val">${fmtINR(recvAge['31-60'])}</div></div>
+            <div class="age-bucket"><div class="ab-label">61-90d</div><div class="ab-val">${fmtINR(recvAge['61-90'])}</div></div>
+            <div class="age-bucket danger"><div class="ab-label">91-180d</div><div class="ab-val">${fmtINR(recvAge['91-180'])}</div></div>
+            <div class="age-bucket danger"><div class="ab-label">180+d</div><div class="ab-val">${fmtINR(recvAge['180+'])}</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-row">
+      <div class="panel">
+        <div class="panel-title">Top Payable Parties <a data-action="goto" data-page="payables">View all →</a></div>
+        <div class="panel-body">
+          <div class="bar-chart">
+          ${topPayParties.length?topPayParties.map(p=>`
+            <div class="bar-item">
+              <div class="b-label" title="${esc(p.label)}">${esc(p.label)}</div>
+              <div class="bar-track"><div class="bar-fill" style="width:${Math.max(4,(p.value/maxPay*100))}%;"></div></div>
+              <div class="b-val">${fmtINR(p.value)}</div>
+            </div>`).join(''):`<div class="empty-state"><div class="big">No payables</div></div>`}
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Recent Receipts <a data-action="goto" data-page="receipt">View all →</a></div>
+        <div class="panel-body">
+          ${recentReceipts.length?recentReceipts.map(r=>`
+            <div class="mini-row">
+              <div><div class="nm">${esc(r.bankPartyName||r.creditLedgerName)}</div><div class="sub">${esc(r.date)} · ${esc(r.voucherNumber)}</div></div>
+              <div class="amt recv">${fmtINR(r.creditLedgerAmount)}</div>
+            </div>`).join(''):`<div class="empty-state"><div class="big">No receipts yet</div></div>`}
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-row" style="grid-template-columns:1fr;">
+      <div class="panel">
+        <div class="panel-title">Recent Payments <a data-action="goto" data-page="payment">View all →</a></div>
+        <div class="panel-body">
+          ${recentPayments.length?recentPayments.map(r=>`
+            <div class="mini-row">
+              <div><div class="nm">${esc(r.bankPartyName||r.debitLedgerName)}</div><div class="sub">${esc(r.date)} · ${esc(r.voucherNumber)}</div></div>
+              <div class="amt pay">${fmtINR(r.debitLedgerAmount)}</div>
+            </div>`).join(''):`<div class="empty-state"><div class="big">No payments yet</div></div>`}
+        </div>
+      </div>
+    </div>`;
+}
+</script>

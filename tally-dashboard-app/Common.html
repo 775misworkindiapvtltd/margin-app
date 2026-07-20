@@ -1,0 +1,451 @@
+<script>
+/* ============================= CONFIG ============================= */
+const PAGE_SIZE_OPTIONS = [50,100,500,1000];
+const AUTO_LOGOUT_TIME = "23:59";
+
+/* ============================= STATE ============================= */
+function dtState(){return{sort:null,dir:1,hidden:new Set(),filters:{},filterOpen:null,widths:{},page:1,pageSize:50};}
+
+let S = {
+  ready:false, loadError:"", user:null, page:null, syncing:false, sidebarOpen:false,
+  expense:[], payables:[], receivables:[], receipt:[], payment:[], balanceParties:[],
+  users:[], missingSheets:[],
+  toast:null, loginError:"",
+  dt:{ expense:dtState(), payables:dtState(), receivables:dtState(), receipt:dtState(), payment:dtState() },
+  colMenuOpen:null, logoutAt:0,
+  ledger:{ search:'', selected:null, detail:null, loading:false },
+  darkMode:false, fontSize:100,
+};
+
+try{ S.darkMode=localStorage.getItem('tally_dark_mode')==='true'; if(S.darkMode)document.documentElement.classList.add('dark'); }catch(e){}
+try{ const fs=parseInt(localStorage.getItem('tally_font_size'),10); if(fs>=80&&fs<=130){S.fontSize=fs;} }catch(e){}
+
+/* ============================= APPS SCRIPT BRIDGE ============================= */
+function runServer(fnName,arg){
+  return new Promise((resolve,reject)=>{
+    if(typeof google==='undefined'||!google.script||!google.script.run){
+      reject(new Error("google.script.run not available — open this page via the Apps Script /exec URL."));return;
+    }
+    let call=google.script.run.withSuccessHandler(resolve).withFailureHandler(err=>reject(new Error(err.message||String(err))));
+    arg===undefined?call[fnName]():call[fnName](arg);
+  });
+}
+
+function applyBootstrap(data){
+  S.expense=data.expense||[]; S.payables=data.payables||[]; S.receivables=data.receivables||[];
+  S.receipt=data.receipt||[]; S.payment=data.payment||[]; S.balanceParties=data.balanceParties||[];
+  S.users=data.users||[]; S.missingSheets=data.missingSheets||[];
+}
+
+async function loadAll(){
+  S.ready=false;render();
+  try{
+    const loginData=await runServer('getLoginData');
+    S.users=loginData.users||[];
+    S.loadError="";
+  }catch(err){ S.loadError=err.message; }
+  S.ready=true;render();startClock();
+}
+
+function permsPayload(){
+  return S.user?{
+    dashboard:S.user.dashboard, expense:S.user.expense, payables:S.user.payables,
+    receivables:S.user.receivables, receipt:S.user.receipt, payment:S.user.payment,
+    ledger:S.user.ledger, overdue:S.user.overdue
+  }:null;
+}
+
+async function loadHeavyData(){
+  S.syncing=true;render();
+  try{
+    applyBootstrap(await runServer('getBootstrapData',permsPayload()));
+    if(S.user){
+      const f=S.users.find(u=>u.id.toLowerCase()===S.user.id.toLowerCase());
+      if(f)S.user=Object.assign({},S.user,f);
+    }
+    S.loadError="";
+  }catch(err){ showToast("Data load error: "+err.message,true); }
+  S.syncing=false;render();
+}
+
+async function refreshData(){
+  S.syncing=true;render();
+  try{
+    applyBootstrap(await runServer('getBootstrapData',permsPayload()));
+    if(S.user){
+      const fresh=await runServer('getUserPermissions',S.user.id);
+      if(fresh)S.user=Object.assign({},S.user,fresh);
+      const item=NAV_ITEMS.find(n=>n.key===S.page);
+      if(item&&!S.user[item.perm])S.page=firstAllowedPage();
+    }
+    S.loadError="";S.syncing=false;
+    Object.keys(S.dt).forEach(k=>{S.dt[k].filters={};S.dt[k].filterOpen=null;S.dt[k].page=1;});
+    showToast("Sheet se latest data mil gaya.",false);
+  }catch(err){S.syncing=false;showToast("Refresh nahi ho paya: "+err.message,true);}
+}
+
+/* ============================= HELPERS ============================= */
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return "&#"+c.charCodeAt(0)+";";});}
+function fmtINR(n){
+  n=Number(n)||0;
+  const neg=n<0;n=Math.abs(n);
+  const parts=n.toFixed(2).split('.');
+  let x=parts[0];
+  let lastThree=x.substring(x.length-3);
+  let other=x.substring(0,x.length-3);
+  if(other!=='') lastThree=','+lastThree;
+  const formatted=other.replace(/\B(?=(\d{2})+(?!\d))/g,',')+lastThree;
+  return (neg?'-':'')+'₹'+formatted;
+}
+function fmtNum(n){ n=Number(n)||0; return n.toLocaleString('en-IN',{maximumFractionDigits:2}); }
+
+function parseDT(v){
+  if(v==null)return null;
+  const s=String(v).trim();if(!s)return null;
+  const M={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  const m=s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{4})(?:[\sT]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m){
+    const day=+m[1],mon=M[m[2].slice(0,3).toLowerCase()],yr=+m[3];
+    if(mon===undefined)return null;
+    const hh=+(m[4]||0),mm=+(m[5]||0),ss=+(m[6]||0);
+    return new Date(yr,mon,day,hh,mm,ss).getTime();
+  }
+  const t=Date.parse(s);return isNaN(t)?null:t;
+}
+function isDateColumn(key){ return /timestamp|date/i.test(key); }
+
+function showToast(msg,isErr){
+  S.toast={msg,isErr};
+  render();
+  setTimeout(()=>{S.toast=null;const t=document.querySelector('.toast');if(t)t.remove();},3000);
+}
+
+/* ============================= AUTO-LOGOUT (NIGHT) ============================= */
+function nextLogoutTs(){
+  const parts=String(AUTO_LOGOUT_TIME).split(':');
+  const h=parseInt(parts[0],10)||0, m=parseInt(parts[1],10)||0;
+  const now=new Date();
+  const t=new Date(now.getFullYear(),now.getMonth(),now.getDate(),h,m,0,0);
+  if(t.getTime()<=now.getTime()) t.setDate(t.getDate()+1);
+  return t.getTime();
+}
+function forceNightLogout(){
+  S.user=null;S.page=null;S.sidebarOpen=false;S.logoutAt=0;
+  S.loginError="Raat ke auto-logout ke kaaran aap sign out ho gaye. Kripya dobara login karein.";
+  render();
+}
+
+/* ============================= LIVE CLOCK ============================= */
+function startClock(){
+  setInterval(()=>{
+    if(S.user && S.logoutAt && Date.now()>=S.logoutAt){ forceNightLogout(); return; }
+  },1000);
+}
+
+/* ============================= LOGIN ============================= */
+function renderLogin(){
+  return `
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-top"><div class="login-eyebrow">Tally · Accounts Desk</div><h1>Tally Dashboard</h1></div>
+    <div class="login-body">
+      ${S.loginError?`<div class="login-error">${esc(S.loginError)}</div>`:""}
+      <form id="loginForm">
+        <div class="field"><label>User ID</label><input type="text" id="loginId" autocomplete="username" placeholder="Enter your ID" required></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPw" autocomplete="current-password" placeholder="••••••" required></div>
+        <button type="submit" class="btn btn-gold btn-block">Sign In</button>
+      </form>
+      <div class="login-hint">Credentials aur permissions aapki <b>LOGIN PAGE</b> sheet mein hain. Jis column mein <b>YES</b> hoga wahi page milega.</div>
+    </div>
+  </div></div>`;
+}
+function firstAllowedPage(){ const f=NAV_ITEMS.find(n=>S.user&&S.user[n.perm]); return f?f.key:null; }
+async function doLogin(id,pw){
+  const u=S.users.find(x=>x.id.toLowerCase()===id.trim().toLowerCase()&&String(x.password)===pw);
+  if(!u){S.loginError="Invalid user ID or password.";render();return;}
+  S.user=u;S.loginError="";S.sidebarOpen=false;S.logoutAt=nextLogoutTs();S.page=firstAllowedPage();render();
+  await loadHeavyData();
+  try{
+    const fresh=await runServer('getUserPermissions',S.user.id);
+    if(fresh){S.user=Object.assign({},S.user,fresh);S.page=firstAllowedPage();render();}
+  }catch(e){}
+}
+
+/* ============================= NAV ============================= */
+const NAV_ITEMS=[
+  {key:'dashboard',   label:'Dashboard',   perm:'dashboard',   group:'Overview', icon:'grid'},
+  {key:'receivables', label:'Receivables', perm:'receivables', group:'Reports',  icon:'in'},
+  {key:'payables',    label:'Payables',    perm:'payables',    group:'Reports',  icon:'out'},
+  {key:'overdue',     label:'Overdue / Ageing', perm:'overdue', group:'Reports', icon:'clock'},
+  {key:'ledger',      label:'Party Ledger',perm:'ledger',      group:'Reports',  icon:'book'},
+  {key:'receipt',     label:'Receipt',     perm:'receipt',     group:'Vouchers', icon:'arrow-down'},
+  {key:'payment',     label:'Payment',     perm:'payment',     group:'Vouchers', icon:'arrow-up'},
+  {key:'expense',     label:'Expense',     perm:'expense',     group:'Vouchers', icon:'wallet'},
+];
+const PAGE_TITLES={
+  dashboard:'Dashboard', receivables:'Receivables', payables:'Payables', overdue:'Overdue / Ageing Analysis',
+  ledger:'Party Ledger', receipt:'Receipt Vouchers', payment:'Payment Vouchers', expense:'Expense Vouchers'
+};
+const NAV_ICONS={
+  grid:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+  in:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg>',
+  out:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>',
+  clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+  book:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  'arrow-down':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
+  'arrow-up':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
+  wallet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>'
+};
+
+/* ============================= SHELL ============================= */
+function renderShell(inner){
+  const items=NAV_ITEMS.filter(n=>S.user[n.perm]);
+  const initials=(S.user.name||'U').substring(0,2).toUpperCase();
+  let navHtml='';
+  let lastGroup=null;
+  items.forEach(n=>{
+    if(n.group!==lastGroup){ navHtml+=`<div class="nav-group-label">${esc(n.group)}</div>`; lastGroup=n.group; }
+    navHtml+=`<div class="nav-item ${S.page===n.key?'active':''}" data-action="nav" data-page="${n.key}"><span class="n-ic">${NAV_ICONS[n.icon]||''}</span>${esc(n.label)}</div>`;
+  });
+  if(!items.length) navHtml=`<div class="nav-empty">No pages assigned. Contact admin.</div>`;
+
+  const bottomItems=items.slice(0,5);
+  const bottomNav=bottomItems.length?`<div class="bottom-nav">${bottomItems.map(n=>`<div class="bn-item ${S.page===n.key?'active':''}" data-action="nav" data-page="${n.key}"><span style="width:18px;height:18px;display:inline-block;">${NAV_ICONS[n.icon]||''}</span>${esc(n.label)}</div>`).join('')}</div>`:'';
+
+  return `
+  <div class="shell">
+    <div class="sidebar-overlay ${S.sidebarOpen?'show':''}" data-action="close-sidebar"></div>
+    <div class="sidebar ${S.sidebarOpen?'open':''}">
+      <div class="brand">
+        <div class="brand-inner"><div class="brand-icon">TD</div><div class="eyebrow">Tally Data</div><h1>Tally Dashboard</h1></div>
+        <button class="sidebar-close" data-action="close-sidebar">✕</button>
+      </div>
+      <div class="nav">${navHtml}</div>
+      <div class="sidebar-foot">
+        <div class="logout-btn" data-action="syncnow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>${S.syncing?'Refreshing…':'Refresh from Sheet'}</div>
+        <div class="logout-btn" data-action="logout"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign Out</div>
+      </div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div class="topbar-left"><button class="hamburger" data-action="open-sidebar">☰</button><h2>${PAGE_TITLES[S.page]||'Dashboard'}</h2></div>
+        <div class="topbar-right"><div class="topbar-controls"><button data-action="toggle-theme" title="Toggle dark/light mode">${S.darkMode?'☀️':'🌙'}</button></div><div class="topbar-welcome">Welcome, <b>${esc(S.user.name)}</b></div><div class="avatar">${initials}</div></div>
+      </div>
+      <div class="content">${inner}</div>
+    </div>
+    ${bottomNav}
+  </div>
+  ${S.toast?`<div class="toast ${S.toast.isErr?'err':''}"><span>${S.toast.isErr?'⚠':'✓'}</span>${esc(S.toast.msg)}</div>`:""}`;
+}
+
+/* ============================= NAV ACTION ============================= */
+async function navigateTo(pageKey){
+  S.colMenuOpen=null;S.page=pageKey;S.sidebarOpen=false;render();
+  try{
+    const fresh=await runServer('getUserPermissions',S.user.id);
+    if(fresh){S.user=Object.assign({},S.user,fresh);
+      const item=NAV_ITEMS.find(n=>n.key===S.page);
+      if(item&&!S.user[item.perm]){showToast("Ye page ab aapke liye uplabdh nahi hai.",true);S.page=firstAllowedPage();}
+      render();
+    }
+  }catch(e){}
+}
+
+/* ============================= GENERIC GRID ENGINE ============================= */
+// GRID_DEFS is populated in Grids.html: { key: {cols:[{key,label,width,pill,num,date}], data:()=>[...] } }
+function renderGrid(tableKey){
+  const def=GRID_DEFS[tableKey];const st=S.dt[tableKey];let rows=def.data().slice();
+  Object.entries(st.filters).forEach(([k,v])=>{if(!v)return;rows=rows.filter(r=>String(r[k]??"").toLowerCase().includes(v.toLowerCase()));});
+  if(st.sort){
+    const col=def.cols.find(c=>c.key===st.sort);
+    const isDateCol=col&&col.date; const isNumCol=col&&col.num;
+    rows.sort((a,b)=>{
+      let x=a[st.sort],y=b[st.sort];
+      if(isDateCol){
+        const dx=parseDT(x),dy=parseDT(y);
+        const ex=(dx===null),ey=(dy===null);
+        if(ex&&ey)return 0; if(ex)return 1; if(ey)return -1;
+        return (dx-dy)*st.dir;
+      }
+      if(isNumCol){
+        const nx=Number(x)||0,ny=Number(y)||0;
+        return (nx-ny)*st.dir;
+      }
+      x=String(x??'').toLowerCase();y=String(y??'').toLowerCase();
+      if(x<y)return-1*st.dir;if(x>y)return 1*st.dir;return 0;
+    });
+  }
+  const total=rows.length;const ps=st.pageSize;const tp=Math.max(1,Math.ceil(total/ps));
+  if(st.page>tp)st.page=tp;if(st.page<1)st.page=1;
+  const si=(st.page-1)*ps;const pageRows=rows.slice(si,si+ps);
+  const visCols=def.cols.filter(c=>!st.hidden.has(c.key));
+
+  const snoTh=`<th style="width:56px;min-width:56px;max-width:56px;"><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">S.No</span></div></div></th>`;
+  const hdr=snoTh+visCols.map(c=>{
+    const w=st.widths[c.key]||c.width||150;const si2=st.sort===c.key?(st.dir===1?'▲':'▼'):'';const fo=st.filterOpen===c.key;
+    let filterHtml='';
+    if(fo) filterHtml=`<div class="th-filter"><input type="text" placeholder="Filter…" data-action="filter" data-table="${tableKey}" data-col="${c.key}" value="${esc(st.filters[c.key]||'')}"></div>`;
+    return `<th style="width:${w}px;min-width:${w}px;max-width:${w}px;" data-col="${c.key}">
+      <div class="th-inner"><div class="th-row">
+        <span class="th-label" data-action="sort" data-table="${tableKey}" data-col="${c.key}">${esc(c.label)}</span>
+        <span class="sort-ic">${si2}</span>
+        <span class="search-ic" data-action="togglesearch" data-table="${tableKey}" data-col="${c.key}">⌕</span>
+      </div>
+      ${filterHtml}
+      <div class="resize-handle" data-action="resize" data-table="${tableKey}" data-col="${c.key}"></div>
+      </div></th>`;
+  }).join("");
+
+  function cellVal(r,c){
+    let v=r[c.key]==null?"":r[c.key];
+    if(c.num) return fmtNum(v);
+    return v;
+  }
+  const bod=pageRows.length?pageRows.map((r,idx)=>`<tr>${(idx===0&&false)?'':''}<td style="text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px;">${si+idx+1}</td>${visCols.map(c=>{const v=cellVal(r,c);const cls=c.num?'num':'';return`<td class="${cls}">${c.pill&&r[c.key]?`<span class="code-pill">${esc(v)}</span>`:esc(v)}</td>`;}).join("")}</tr>`).join(""):`<tr><td colspan="${visCols.length+1}"><div class="empty-state"><div class="big">No matching rows</div>Filters adjust karke dekho, ya abhi koi data nahi hai.</div></td></tr>`;
+  const rf=total===0?0:si+1;const rt=Math.min(si+ps,total);
+
+  const mcards=pageRows.length?pageRows.map((r,idx)=>renderMobileCard(tableKey,r,si+idx+1)).join(''):`<div class="empty-state"><div class="big">No matching rows</div></div>`;
+
+  return `
+    <div class="dt-toolbar">
+      <div class="count">${total} of ${def.data().length} rows</div>
+      <button class="btn btn-ghost" data-action="syncnow" style="padding:7px 14px;">${S.syncing?'⟳ Refreshing…':'⟳ Refresh'}</button>
+      <div class="dt-colmenu-wrap">
+        <button class="btn btn-ghost" data-action="togglecolmenu" data-table="${tableKey}" style="padding:7px 14px;">Columns ▾</button>
+        ${S.colMenuOpen===tableKey?`<div class="dt-colmenu"><div class="h">Show / hide columns</div>${def.cols.map(c=>`<label><input type="checkbox" data-action="togglecol" data-table="${tableKey}" data-col="${c.key}" ${st.hidden.has(c.key)?'':'checked'}> ${esc(c.label)}</label>`).join("")}</div>`:""}
+      </div>
+    </div>
+    <div class="dt-table-wrap">
+      <div class="dt-scroll"><table class="dt"><thead><tr>${hdr}</tr></thead><tbody>${bod}</tbody></table></div>
+    </div>
+    <div class="mcard-list">${mcards}</div>
+    <div class="dt-pagination">
+      <div class="pp">Rows per page: <select data-action="pagesize" data-table="${tableKey}">${PAGE_SIZE_OPTIONS.map(n=>`<option value="${n}" ${st.pageSize===n?'selected':''}>${n}</option>`).join("")}</select></div>
+      <div>${total===0?'0':`${rf}–${rt}`} of ${total}</div>
+      <div class="nav">
+        <button data-action="pagefirst" data-table="${tableKey}" ${st.page<=1?'disabled':''}>«</button>
+        <button data-action="pageprev" data-table="${tableKey}" ${st.page<=1?'disabled':''}>‹</button>
+        <span class="pageinfo">${st.page} / ${tp}</span>
+        <button data-action="pagenext" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>›</button>
+        <button data-action="pagelast" data-table="${tableKey}" ${st.page>=tp?'disabled':''}>»</button>
+      </div>
+    </div>`;
+}
+
+// Mobile card fallback renderer — each grid def can supply mcard(r) for a custom layout;
+// otherwise falls back to a generic title/amount/grid card built from the column list.
+function renderMobileCard(tableKey,r,sno){
+  const def=GRID_DEFS[tableKey];
+  if(def.mcard) return def.mcard(r,sno);
+  const titleCol=def.cols[0];
+  const amtCol=def.cols.find(c=>c.num);
+  const rest=def.cols.filter(c=>c!==titleCol&&c!==amtCol).slice(0,6);
+  return `<div class="mcard">
+    <div class="mcard-top">
+      <div><div class="mcard-title">${esc(r[titleCol.key]||'')}</div></div>
+      ${amtCol?`<div class="mcard-amt">${fmtINR(r[amtCol.key])}</div>`:''}
+    </div>
+    <div class="mcard-grid">${rest.map(c=>`<div class="k">${esc(c.label)}</div><div class="v">${esc(r[c.key]||'')}</div>`).join('')}</div>
+  </div>`;
+}
+
+/* ============================= EVENTS ============================= */
+let resizeCtx=null,filterTimer=null;
+
+document.addEventListener('submit',e=>{if(e.target&&e.target.id==='loginForm'){e.preventDefault();doLogin(document.getElementById('loginId').value,document.getElementById('loginPw').value);}});
+
+document.addEventListener('input',e=>{
+  const el=e.target;
+  if(el.getAttribute('data-action')==='filter'){
+    const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');
+    S.dt[t].filters[c]=el.value;
+    clearTimeout(filterTimer);
+    filterTimer=setTimeout(()=>{S.dt[t].page=1;const pos=el.selectionStart;render();
+      const ag=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);
+      if(ag){ag.focus();ag.setSelectionRange(pos,pos);}
+    },350);
+    return;
+  }
+  if(el.getAttribute('data-action')==='ledger-search'){
+    S.ledger.search=el.value;
+    clearTimeout(filterTimer);
+    filterTimer=setTimeout(()=>{const pos=el.selectionStart;render();
+      const ag=document.querySelector('input[data-action="ledger-search"]');
+      if(ag){ag.focus();ag.setSelectionRange(pos,pos);}
+    },250);
+  }
+});
+
+document.addEventListener('change',e=>{
+  const el=e.target;
+  if(el.getAttribute('data-action')==='pagesize'){const t=el.getAttribute('data-table');S.dt[t].pageSize=parseInt(el.value,10);S.dt[t].page=1;render();}
+});
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.getAttribute('data-action');
+  if(a==='open-sidebar'){S.sidebarOpen=true;render();return;}
+  if(a==='close-sidebar'){S.sidebarOpen=false;render();return;}
+  if(a==='toggle-theme'){
+    S.darkMode=!S.darkMode;
+    document.documentElement.classList.toggle('dark',S.darkMode);
+    try{localStorage.setItem('tally_dark_mode',S.darkMode?'true':'false');}catch(e){}
+    render();return;
+  }
+  if(a==='nav'){navigateTo(el.getAttribute('data-page'));return;}
+  if(a==='goto'){navigateTo(el.getAttribute('data-page'));return;}
+  if(a==='logout'){S.user=null;S.page=null;S.sidebarOpen=false;S.logoutAt=0;render();return;}
+  if(a==='syncnow'){refreshData();return;}
+  if(a==='sort'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.sort===c)st.dir*=-1;else{st.sort=c;st.dir=1;}st.page=1;render();return;}
+  if(a==='pagefirst'){S.dt[el.getAttribute('data-table')].page=1;render();return;}
+  if(a==='pageprev'){const st=S.dt[el.getAttribute('data-table')];st.page=Math.max(1,st.page-1);render();return;}
+  if(a==='pagenext'){S.dt[el.getAttribute('data-table')].page++;render();return;}
+  if(a==='pagelast'){S.dt[el.getAttribute('data-table')].page=999999;render();return;}
+  if(a==='togglesearch'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];
+    st.filterOpen=st.filterOpen===c?null:c;render();if(st.filterOpen){const inp=document.querySelector(`input[data-action="filter"][data-table="${t}"][data-col="${c}"]`);if(inp)inp.focus();}return;}
+  if(a==='togglecolmenu'){const t=el.getAttribute('data-table');S.colMenuOpen=S.colMenuOpen===t?null:t;render();return;}
+  if(a==='togglecol'){const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const st=S.dt[t];if(st.hidden.has(c))st.hidden.delete(c);else st.hidden.add(c);render();S.colMenuOpen=t;return;}
+  if(a==='select-party'){selectLedgerParty(el.getAttribute('data-name'));return;}
+  if(a==='ledger-print'){window.print();return;}
+});
+document.addEventListener('click',e=>{if(!e.target.closest('.dt-colmenu-wrap')&&S.colMenuOpen){S.colMenuOpen=null;render();}});
+
+document.addEventListener('mousedown',e=>{
+  const el=e.target.closest('[data-action="resize"]');if(!el)return;
+  const t=el.getAttribute('data-table'),c=el.getAttribute('data-col');const th=el.closest('th');
+  el.classList.add('active');resizeCtx={t,c,el,startX:e.clientX,startW:th.getBoundingClientRect().width};e.preventDefault();
+});
+document.addEventListener('mousemove',e=>{
+  if(!resizeCtx)return;const nw=Math.max(60,Math.round(resizeCtx.startW+(e.clientX-resizeCtx.startX)));
+  const th=document.querySelector(`table.dt th[data-col="${resizeCtx.c}"]`);
+  if(th){th.style.width=nw+'px';th.style.minWidth=nw+'px';th.style.maxWidth=nw+'px';}
+});
+document.addEventListener('mouseup',e=>{
+  if(!resizeCtx)return;
+  S.dt[resizeCtx.t].widths[resizeCtx.c]=Math.max(60,Math.round(resizeCtx.startW+(e.clientX-resizeCtx.startX)));
+  resizeCtx.el.classList.remove('active');resizeCtx=null;render();
+});
+
+/* ============================= RENDER ============================= */
+function render(){
+  const app=document.getElementById('app');
+  if(!S.ready){app.innerHTML=`<div class="loading-screen"><div class="spinner"></div><div>Loading dashboard…</div></div>`;return;}
+  if(S.loadError){app.innerHTML=`<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="login-eyebrow">Setup</div><h1>Sheet load failed</h1></div><div class="login-body"><div class="login-error">${esc(S.loadError)}</div><div class="login-hint">1) Open via the Apps Script <b>/exec</b> URL. 2) Required tabs: LOGIN PAGE, EXPENSE, PAYABLES, RECEIVABLES, Receipt, PAYMENT, Balance. 3) Deploy access = "Anyone".</div><button class="btn btn-gold btn-block" style="margin-top:14px;" data-action="syncnow">Retry</button></div></div></div>`;return;}
+  if(!S.user){app.innerHTML=renderLogin();return;}
+  const dtScroll=document.querySelector('.dt-scroll');
+  const savedDtScrollLeft=dtScroll?dtScroll.scrollLeft:0;
+  const savedDtScrollTop=dtScroll?dtScroll.scrollTop:0;
+  let inner="";
+  if(S.syncing && !S.expense.length && !S.payables.length && !S.receivables.length && !S.balanceParties.length){
+    inner=`<div class="empty-state" style="padding-top:80px;"><div class="spinner" style="margin:0 auto 16px;"></div><div class="big">Loading data…</div><div style="margin-top:6px;">Aapka data background mein load ho raha hai, kuch seconds lagenge.</div></div>`;
+  } else if(S.page==='dashboard')inner=renderDashboard();
+  else if(S.page==='overdue')inner=renderOverdue();
+  else if(S.page==='ledger')inner=renderLedgerPage();
+  else if(GRID_DEFS[S.page])inner=renderGrid(S.page);
+  else inner=`<div class="empty-state"><div class="big">Select a page</div>Left mein menu se apna page choose karein.</div>`;
+  app.innerHTML=renderShell(inner);
+  const dtScroll2=document.querySelector('.dt-scroll');
+  if(dtScroll2){dtScroll2.scrollLeft=savedDtScrollLeft;dtScroll2.scrollTop=savedDtScrollTop;}
+}
+
+loadAll();
+</script>

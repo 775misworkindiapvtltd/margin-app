@@ -1,0 +1,96 @@
+<script>
+/* ============================= OVERDUE / AGEING ============================= */
+const AGE_BUCKET_DEFS=[
+  {key:'0-30',label:'0-30 Days',test:d=>d<=30},
+  {key:'31-60',label:'31-60 Days',test:d=>d>30&&d<=60},
+  {key:'61-90',label:'61-90 Days',test:d=>d>60&&d<=90},
+  {key:'91-180',label:'91-180 Days',test:d=>d>90&&d<=180},
+  {key:'180+',label:'180+ Days',test:d=>d>180}
+];
+
+function bucketRows(rows,amtKey){
+  const out={};
+  AGE_BUCKET_DEFS.forEach(b=>out[b.key]={label:b.label,total:0,rows:[]});
+  rows.forEach(r=>{
+    const d=Number(r.overdueDays)||0;
+    if(d<=0)return; // not overdue
+    const b=AGE_BUCKET_DEFS.find(bb=>bb.test(d));
+    if(!b)return;
+    out[b.key].total+=Number(r[amtKey])||0;
+    out[b.key].rows.push(r);
+  });
+  return out;
+}
+
+let overdueTab='receivables';
+
+function renderOverdue(){
+  const recvBuckets=bucketRows(S.receivables,'pendingAmount');
+  const payBuckets=bucketRows(S.payables,'closingBalance');
+  const rows=overdueTab==='receivables'?S.receivables:S.payables;
+  const amtKey=overdueTab==='receivables'?'pendingAmount':'closingBalance';
+  const buckets=overdueTab==='receivables'?recvBuckets:payBuckets;
+  const overdueRows=rows.filter(r=>(Number(r.overdueDays)||0)>0).sort((a,b)=>(Number(b.overdueDays)||0)-(Number(a.overdueDays)||0));
+  const grandTotal=overdueRows.reduce((s,r)=>s+(Number(r[amtKey])||0),0);
+
+  const bucketCards=AGE_BUCKET_DEFS.map(b=>{
+    const dangerCls=(b.key==='91-180'||b.key==='180+')?' danger':'';
+    return `<div class="age-bucket${dangerCls}"><div class="ab-label">${b.label}</div><div class="ab-val">${fmtINR(buckets[b.key].total)}</div><div class="card-sub">${buckets[b.key].rows.length} bills</div></div>`;
+  }).join('');
+
+  const tableRows=overdueRows.map((r,idx)=>`
+    <tr>
+      <td style="text-align:center;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11.5px;">${idx+1}</td>
+      <td>${esc(r.partyName)}</td>
+      <td>${esc(r.billRefNo)}</td>
+      <td>${esc(r.billDate)}</td>
+      <td>${esc(r.dueDate)}</td>
+      <td class="num">${fmtNum(r.overdueDays)}</td>
+      <td class="num">${fmtINR(r[amtKey])}</td>
+    </tr>`).join('');
+
+  const mcards=overdueRows.map((r,idx)=>`
+    <div class="mcard">
+      <div class="mcard-top">
+        <div><div class="mcard-title">${esc(r.partyName)}</div><div class="mcard-sub">${esc(r.billRefNo)} · Due ${esc(r.dueDate)}</div></div>
+        <div class="mcard-amt" style="color:${overdueTab==='receivables'?'var(--recv)':'var(--pay)'};">${fmtINR(r[amtKey])}</div>
+      </div>
+      <div class="mcard-grid">
+        <div class="k">Bill Date</div><div class="v">${esc(r.billDate)}</div>
+        <div class="k">Overdue Days</div><div class="v">${fmtNum(r.overdueDays)}</div>
+      </div>
+    </div>`).join('');
+
+  return `
+    <div class="rpt-toolbar" style="margin-bottom:12px;display:flex;gap:8px;">
+      <div class="rpt-toggle-btns" style="display:flex;border:1.5px solid var(--line);border-radius:6px;overflow:hidden;">
+        <button class="${overdueTab==='receivables'?'active':''}" data-action="overdue-tab" data-val="receivables" style="border:none;padding:7px 16px;font-size:11.5px;font-weight:700;cursor:pointer;background:${overdueTab==='receivables'?'var(--accent)':'#fff'};color:${overdueTab==='receivables'?'#fff':'var(--ink-secondary)'};">Receivables</button>
+        <button class="${overdueTab==='payables'?'active':''}" data-action="overdue-tab" data-val="payables" style="border:none;padding:7px 16px;font-size:11.5px;font-weight:700;cursor:pointer;background:${overdueTab==='payables'?'var(--accent)':'#fff'};color:${overdueTab==='payables'?'#fff':'var(--ink-secondary)'};">Payables</button>
+      </div>
+      <div class="count" style="align-self:center;">${overdueRows.length} overdue bills · Total ${fmtINR(grandTotal)}</div>
+    </div>
+    <div class="age-buckets" style="margin-bottom:16px;">${bucketCards}</div>
+    <div class="dt-table-wrap">
+      <div class="dt-scroll">
+        <table class="dt" style="width:100%;table-layout:auto;">
+          <thead><tr>
+            <th style="width:50px;"><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">S.No</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Party Name</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Bill Ref No</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Bill Date</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Due Date</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Overdue Days</span></div></div></th>
+            <th><div class="th-inner"><div class="th-row"><span class="th-label" style="cursor:default;">Amount</span></div></div></th>
+          </tr></thead>
+          <tbody>${tableRows||`<tr><td colspan="7"><div class="empty-state"><div class="big">No overdue bills 🎉</div></div></td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="mcard-list">${mcards||`<div class="empty-state"><div class="big">No overdue bills 🎉</div></div>`}</div>`;
+}
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-action="overdue-tab"]');if(!el)return;
+  overdueTab=el.getAttribute('data-val');render();
+});
+</script>

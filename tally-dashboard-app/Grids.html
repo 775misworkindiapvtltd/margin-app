@@ -1,0 +1,107 @@
+<script>
+/* ============================= GRID COLUMN DEFINITIONS ============================= */
+const EXPENSE_COLS=[
+  {key:'timestamp',label:'Timestamp',width:150,date:true},
+  {key:'date',label:'Date',width:110,date:true},
+  {key:'voucherNumber',label:'Voucher No',width:100},
+  {key:'partyName',label:'Party Name',width:220},
+  {key:'group',label:'Group',width:130},
+  {key:'subGroup',label:'Sub Group',width:150},
+  {key:'designNumber',label:'Design No',width:110},
+  {key:'itemName',label:'Item Name',width:150},
+  {key:'qty',label:'Qty',width:80},
+  {key:'rate',label:'Rate',width:90},
+  {key:'amount',label:'Amount',width:120,num:true},
+  {key:'type',label:'Type',width:70}
+];
+
+const PAYABLES_COLS=[
+  {key:'timestamp',label:'Timestamp',width:150,date:true},
+  {key:'billDate',label:'Bill Date',width:110,date:true},
+  {key:'billRefNo',label:'Bill Ref No',width:150},
+  {key:'partyName',label:'Party Name',width:220},
+  {key:'partyGroup',label:'Party Group',width:130},
+  {key:'subGroup',label:'Sub Group',width:150},
+  {key:'mainGroup',label:'Main Group',width:150},
+  {key:'salesPerson',label:'Sales Person',width:120},
+  {key:'phoneNo',label:'Phone No',width:130},
+  {key:'paymentTerms',label:'Payment Terms',width:130},
+  {key:'closingBalance',label:'Closing Balance',width:140,num:true},
+  {key:'dueDate',label:'Due Date',width:110,date:true},
+  {key:'overdueDays',label:'Overdue Days',width:110,num:true}
+];
+
+const RECEIVABLES_COLS=[
+  {key:'timestamp',label:'Timestamp',width:150,date:true},
+  {key:'billDate',label:'Bill Date',width:110,date:true},
+  {key:'billRefNo',label:'Bill Ref No',width:150},
+  {key:'partyName',label:'Party Name',width:220},
+  {key:'partyGroup',label:'Party Group',width:130},
+  {key:'subGroup',label:'Sub Group',width:150},
+  {key:'mainGroup',label:'Main Group',width:150},
+  {key:'salesPerson',label:'Sales Person',width:120},
+  {key:'phoneNo',label:'Phone No',width:130},
+  {key:'paymentTerms',label:'Payment Terms',width:130},
+  {key:'pendingAmount',label:'Pending Amount',width:140,num:true},
+  {key:'dueDate',label:'Due Date',width:110,date:true},
+  {key:'overdueDays',label:'Overdue Days',width:110,num:true}
+];
+
+const RECEIPT_COLS=[
+  {key:'timestamp',label:'Timestamp',width:150,date:true},
+  {key:'voucherNumber',label:'Voucher No',width:110},
+  {key:'date',label:'Date',width:100,date:true},
+  {key:'group',label:'Group',width:120},
+  {key:'subGroup',label:'Sub Group',width:130},
+  {key:'creditLedgerName',label:'Ledger (Cr)',width:180},
+  {key:'creditLedgerAmount',label:'Amount (Cr)',width:120,num:true},
+  {key:'billType',label:'Bill Type',width:100},
+  {key:'billName',label:'Bill Name',width:150},
+  {key:'billAmount',label:'Bill Amount',width:120,num:true},
+  {key:'debitLedgerName',label:'Ledger (Dr)',width:200},
+  {key:'debitLedgerAmount',label:'Amount (Dr)',width:120,num:true},
+  {key:'bankPartyName',label:'Bank/Party Name',width:180},
+  {key:'transactionType',label:'Transaction Type',width:130},
+  {key:'instNo',label:'Instrument No',width:120},
+  {key:'instDate',label:'Instrument Date',width:130,date:true},
+  {key:'bankName',label:'Bank Name',width:180}
+];
+
+const PAYMENT_COLS=RECEIPT_COLS; // identical layout per user's sheet description
+
+const GRID_DEFS={
+  expense:{cols:EXPENSE_COLS,data:()=>S.expense},
+  payables:{cols:PAYABLES_COLS,data:()=>S.payables},
+  receivables:{cols:RECEIVABLES_COLS,data:()=>S.receivables},
+  receipt:{cols:RECEIPT_COLS,data:()=>S.receipt,mcard:(r,sno)=>`
+    <div class="mcard">
+      <div class="mcard-top">
+        <div><div class="mcard-title">${esc(r.bankPartyName||r.creditLedgerName||'—')}</div><div class="mcard-sub">${esc(r.date)} · ${esc(r.voucherNumber)}</div></div>
+        <div class="mcard-amt" style="color:var(--recv);">${fmtINR(r.creditLedgerAmount)}</div>
+      </div>
+      <div class="mcard-grid">
+        <div class="k">Ledger (Cr)</div><div class="v">${esc(r.creditLedgerName)}</div>
+        <div class="k">Ledger (Dr)</div><div class="v">${esc(r.debitLedgerName)}</div>
+        <div class="k">Bill Name</div><div class="v">${esc(r.billName)}</div>
+        <div class="k">Bank</div><div class="v">${esc(r.bankName)}</div>
+        <div class="k">Txn Type</div><div class="v">${esc(r.transactionType)}</div>
+        <div class="k">Instrument</div><div class="v">${esc(r.instNo)}</div>
+      </div>
+    </div>`},
+  payment:{cols:PAYMENT_COLS,data:()=>S.payment,mcard:(r,sno)=>`
+    <div class="mcard">
+      <div class="mcard-top">
+        <div><div class="mcard-title">${esc(r.bankPartyName||r.debitLedgerName||'—')}</div><div class="mcard-sub">${esc(r.date)} · ${esc(r.voucherNumber)}</div></div>
+        <div class="mcard-amt" style="color:var(--pay);">${fmtINR(r.debitLedgerAmount)}</div>
+      </div>
+      <div class="mcard-grid">
+        <div class="k">Ledger (Dr)</div><div class="v">${esc(r.debitLedgerName)}</div>
+        <div class="k">Ledger (Cr)</div><div class="v">${esc(r.creditLedgerName)}</div>
+        <div class="k">Bill Name</div><div class="v">${esc(r.billName)}</div>
+        <div class="k">Bank</div><div class="v">${esc(r.bankName)}</div>
+        <div class="k">Txn Type</div><div class="v">${esc(r.transactionType)}</div>
+        <div class="k">Instrument</div><div class="v">${esc(r.instNo)}</div>
+      </div>
+    </div>`}
+};
+</script>
