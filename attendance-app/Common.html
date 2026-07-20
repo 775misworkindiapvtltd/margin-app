@@ -1,0 +1,234 @@
+<script>
+/* ============================================================
+ * CONFIG
+ * ============================================================ */
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/* ============================================================
+ * STATE
+ * ============================================================ */
+let S = {
+  ready: false, loadError: "", user: null, page: "dashboard", sidebarOpen: false,
+  today: { punchedIn: false, punchedOut: false, punchInTime: "", punchOutTime: "" },
+  toast: null, loginError: "", submitting: false,
+
+  // Employee: attendance history
+  myAtt: { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' },
+
+  // Capture flow (selfie + GPS) shared by Punch In / Punch Out
+  capture: null, // { type:'IN'|'OUT', gpsStatus, gpsError, lat, lng, address, photoDataUrl, camReady, stream }
+
+  // Admin
+  admin: {
+    employees: [], employeesLoaded: false,
+    entries: [], entriesLoaded: false,
+    filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' },
+    viewEntry: null,
+    addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false
+  },
+
+  photoPreviewUrl: null
+};
+
+/* ============================================================ APPS SCRIPT BRIDGE ============================================================ */
+function runServer(fnName, arg) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error("google.script.run not available — open this page via the Apps Script /exec URL.")); return;
+    }
+    let call = google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err))));
+    arg === undefined ? call[fnName]() : call[fnName](arg);
+  });
+}
+
+/* ============================================================ HELPERS ============================================================ */
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";"); }
+function showToast(msg, isErr) {
+  S.toast = { msg, isErr }; render();
+  setTimeout(() => { S.toast = null; const t = document.querySelector('.toast'); if (t) t.remove(); }, 3200);
+}
+function currentYearOptions() {
+  const y = new Date().getFullYear(); const arr = [];
+  for (let i = y - 2; i <= y + 1; i++) arr.push(i);
+  return arr;
+}
+
+/* ============================================================ LIVE CLOCK ============================================================ */
+function startClock() {
+  setInterval(() => {
+    const timeEl = document.getElementById('liveTime');
+    const dateEl = document.getElementById('liveDate');
+    if (!timeEl && !dateEl) return;
+    const d = new Date();
+    const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; const pad = n => String(n).padStart(2, '0');
+    if (timeEl) timeEl.textContent = `${pad(h12)}:${pad(m)}:${pad(s)} ${ampm}`;
+    if (dateEl) dateEl.textContent = `${pad(d.getDate())} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+  }, 1000);
+}
+
+/* ============================================================ LOGIN / LOGOUT ============================================================ */
+// google.script.run does not support multiple args cleanly through our single-arg runServer()
+// wrapper, so login uses its own two-argument call.
+function loginCall(employeeId, password) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error("google.script.run not available — open via the Apps Script /exec URL.")); return;
+    }
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err)))).login(employeeId, password);
+  });
+}
+
+async function handleLoginSubmit(id, pw) {
+  if (!id || !pw) { S.loginError = "Please enter Employee ID and Password."; render(); return; }
+  S.loginError = ""; S.submitting = true; render();
+  try {
+    const res = await loginCall(id.trim(), pw);
+    S.submitting = false;
+    if (res.status !== 'ok') { S.loginError = res.message || 'Login failed.'; render(); return; }
+    S.user = res.user;
+    S.page = (S.user.role === 'Admin') ? 'admin-entries' : 'dashboard';
+    render();
+    if (S.user.role !== 'Admin') { await loadTodayStatus(); }
+    render();
+  } catch (err) {
+    S.submitting = false; S.loginError = err.message; render();
+  }
+}
+
+function doLogout() {
+  S.user = null; S.page = 'dashboard'; S.sidebarOpen = false;
+  S.myAtt = { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' };
+  S.admin = { employees: [], employeesLoaded: false, entries: [], entriesLoaded: false, filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' }, viewEntry: null, addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false };
+  render();
+}
+
+async function loadTodayStatus() {
+  try {
+    const st = await runServer('getTodayStatus', S.user.id);
+    S.today = st;
+  } catch (err) { showToast("Could not load today's status: " + err.message, true); }
+}
+
+/* ============================================================ NAV ============================================================ */
+function navigateTo(page) {
+  S.sidebarOpen = false; S.page = page; render();
+  if (page === 'history' && !S.myAtt.loaded) loadMyAttendance();
+  if (page === 'admin-entries') loadAdminEntries();
+  if (page === 'admin-employees' && !S.admin.employeesLoaded) loadAdminEmployees();
+}
+
+/* ============================================================ EVENT DELEGATION ============================================================ */
+document.addEventListener('submit', e => {
+  if (e.target && e.target.id === 'loginForm') {
+    e.preventDefault();
+    handleLoginSubmit(document.getElementById('loginId').value, document.getElementById('loginPw').value);
+  }
+  if (e.target && e.target.id === 'addEmpForm') {
+    e.preventDefault();
+    submitAddEmployee();
+  }
+});
+
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (el.getAttribute('data-action') === 'my-month') { S.myAtt.month = parseInt(el.value, 10); loadMyAttendance(); }
+  if (el.getAttribute('data-action') === 'my-year') { S.myAtt.year = parseInt(el.value, 10); loadMyAttendance(); }
+  if (el.getAttribute('data-action') === 'adm-month') { S.admin.filters.month = parseInt(el.value, 10); loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-year') { S.admin.filters.year = parseInt(el.value, 10); loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-emp') { S.admin.filters.employeeId = el.value; loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-date') { S.admin.filters.date = el.value; loadAdminEntries(); }
+});
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]'); if (!el) return;
+  const a = el.getAttribute('data-action');
+
+  if (a === 'nav') { navigateTo(el.getAttribute('data-page')); return; }
+  if (a === 'logout') { doLogout(); return; }
+  if (a === 'toggle-sidebar') { S.sidebarOpen = !S.sidebarOpen; render(); return; }
+
+  if (a === 'open-punch-in') { openCapture('IN'); return; }
+  if (a === 'open-punch-out') { openCapture('OUT'); return; }
+  if (a === 'close-capture') { closeCapture(); return; }
+  if (a === 'retry-gps') { requestGPS(); return; }
+  if (a === 'retake-photo') { retakePhoto(); return; }
+  if (a === 'confirm-submit') { submitPunch(); return; }
+
+  if (a === 'my-view-table') { S.myAtt.view = 'table'; render(); return; }
+  if (a === 'my-view-cards') { S.myAtt.view = 'cards'; render(); return; }
+
+  if (a === 'view-entry') { openViewEntry(el.getAttribute('data-idx')); return; }
+  if (a === 'close-view-entry') { S.admin.viewEntry = null; render(); return; }
+  if (a === 'view-entry-overlay') { if (el === e.target) { S.admin.viewEntry = null; render(); } return; }
+
+  if (a === 'preview-photo') { S.photoPreviewUrl = el.getAttribute('data-url'); render(); return; }
+  if (a === 'close-photo-preview') { S.photoPreviewUrl = null; render(); return; }
+
+  if (a === 'open-add-employee') { openAddEmployee(); return; }
+  if (a === 'close-add-employee') { S.admin.addEmpOpen = false; render(); return; }
+  if (a === 'add-employee-overlay') { if (el === e.target) { S.admin.addEmpOpen = false; render(); } return; }
+  if (a === 'save-add-employee') { submitAddEmployee(); return; }
+});
+
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.hasAttribute('data-emp-field')) {
+    if (!S.admin.addEmpForm) return;
+    S.admin.addEmpForm[el.getAttribute('data-emp-field')] = el.value;
+  }
+});
+
+/* ============================================================ RENDER LOOP ============================================================ */
+function render() {
+  const app = document.getElementById('app');
+  if (!S.ready) { app.innerHTML = `<div class="loading-screen"><div class="spinner"></div><div>Loading Attendance System…</div></div>`; return; }
+  if (S.loadError) { app.innerHTML = `<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="icon-badge">⚠️</div><h1>Setup Required</h1></div><div class="login-body"><div class="login-error">${esc(S.loadError)}</div><button class="btn btn-primary btn-block" style="margin-top:10px;" data-action="nav" data-page="dashboard" onclick="location.reload()">Retry</button></div></div></div>`; return; }
+  if (!S.user) { app.innerHTML = renderLogin(); return; }
+
+  let html = "";
+  if (S.user.role === 'Admin') {
+    html = renderAdminShell();
+  } else {
+    html = renderEmployeeShell();
+  }
+  app.innerHTML = html;
+
+  // Overlays that live outside the main shell
+  renderCaptureOverlay();
+  renderPhotoPreviewOverlay();
+
+  if (S.toast) {
+    const old = document.querySelector('.toast'); if (old) old.remove();
+    const d = document.createElement('div');
+    d.className = 'toast' + (S.toast.isErr ? ' err' : '');
+    d.innerHTML = `<span>${S.toast.isErr ? '⚠️' : '✅'}</span>${esc(S.toast.msg)}`;
+    document.body.appendChild(d);
+  }
+}
+
+function renderLogin() {
+  return `
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-top">
+      <div class="icon-badge">🕒</div>
+      <h1>Smart Attendance</h1>
+      <p>Sign in with your Employee ID to continue</p>
+    </div>
+    <div class="login-body">
+      ${S.loginError ? `<div class="login-error">${esc(S.loginError)}</div>` : ""}
+      <form id="loginForm">
+        <div class="field"><label>Employee ID</label><input type="text" id="loginId" autocomplete="username" placeholder="e.g. EMP001" required></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPw" autocomplete="current-password" placeholder="••••••" required></div>
+        <button type="submit" class="btn btn-primary btn-block" ${S.submitting ? 'disabled' : ''}>${S.submitting ? '<span class="spinner spinner-sm"></span> Signing in…' : 'Sign In'}</button>
+      </form>
+    </div>
+  </div></div>`;
+}
+
+/* Kick things off */
+(async function boot() {
+  S.ready = true; render(); startClock();
+})();
+</script>

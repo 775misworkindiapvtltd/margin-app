@@ -1,0 +1,177 @@
+<script>
+/* ============================================================
+ * EMPLOYEE SHELL — Dashboard (punch) + Attendance History
+ * Bottom nav: Dashboard | Attendance | Profile
+ * ============================================================ */
+
+function renderEmployeeShell() {
+  const initials = (S.user.name || 'U').substring(0, 1).toUpperCase();
+  let inner = '';
+  if (S.page === 'history') inner = renderMyHistory();
+  else if (S.page === 'profile') inner = renderProfile();
+  else inner = renderDashboard();
+
+  return `
+  <div class="emp-shell">
+    <div class="emp-topbar">
+      <div class="brand"><div class="logo">${initials}</div><span>Smart Attendance</span></div>
+      <div class="logout-ic" data-action="logout" title="Sign out">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </div>
+    </div>
+    <div class="emp-content">${inner}</div>
+    <div class="bottom-nav">
+      <div class="nav-item ${S.page === 'dashboard' ? 'active' : ''}" data-action="nav" data-page="dashboard"><span class="ic">🏠</span>Dashboard</div>
+      <div class="nav-item ${S.page === 'history' ? 'active' : ''}" data-action="nav" data-page="history"><span class="ic">📅</span>Attendance</div>
+      <div class="nav-item ${S.page === 'profile' ? 'active' : ''}" data-action="nav" data-page="profile"><span class="ic">👤</span>Profile</div>
+    </div>
+  </div>`;
+}
+
+function statusInfo() {
+  if (S.today.punchedOut) return { cls: 'out', label: 'Punched Out' };
+  if (S.today.punchedIn) return { cls: 'in', label: 'Punched In' };
+  return { cls: 'none', label: 'Not Punched Yet' };
+}
+
+function renderDashboard() {
+  const st = statusInfo();
+  let punchZone = '';
+  if (!S.today.punchedIn) {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn in" data-action="open-punch-in"><span class="ic">🟢</span>PUNCH IN</button>
+        <div class="punch-hint">Selfie aur Location zaroori hai punch karne ke liye.</div>
+      </div>`;
+  } else if (!S.today.punchedOut) {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn out" data-action="open-punch-out"><span class="ic">🔴</span>PUNCH OUT</button>
+        <div class="punch-hint">Punched In at <b>${esc(S.today.punchInTime)}</b></div>
+      </div>`;
+  } else {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn done" disabled><span class="ic">✅</span>DONE FOR TODAY</button>
+        <div class="done-banner" style="width:100%;margin-top:14px;">
+          <span class="ic">🎉</span>
+          <div>Aaj ka attendance complete ho gaya!<br><b>In:</b> ${esc(S.today.punchInTime)} &nbsp; <b>Out:</b> ${esc(S.today.punchOutTime)}</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="welcome-card">
+      <div class="row1">
+        <div><div class="greet">Welcome back,</div><div class="name">${esc(S.user.name)}</div></div>
+        <div class="clock"><div class="time" id="liveTime">--:--:--</div><div class="date" id="liveDate">--</div></div>
+      </div>
+      <div class="status-pill ${st.cls}"><span class="dot"></span>${st.label}</div>
+    </div>
+    ${punchZone}
+    <div class="card">
+      <div class="section-title">📊 Today's Summary</div>
+      <div class="summary-grid">
+        <div class="summary-card present"><div class="val">${S.today.punchInTime ? '✓' : '—'}</div><div class="lbl">Punch In</div><div style="font-size:12px;margin-top:4px;font-weight:600;">${esc(S.today.punchInTime || '--:--')}</div></div>
+        <div class="summary-card hours"><div class="val">${S.today.punchOutTime ? '✓' : '—'}</div><div class="lbl">Punch Out</div><div style="font-size:12px;margin-top:4px;font-weight:600;">${esc(S.today.punchOutTime || '--:--')}</div></div>
+      </div>
+    </div>`;
+}
+
+function renderProfile() {
+  return `
+    <div class="card" style="text-align:center;padding:26px 16px;">
+      <div style="width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg,var(--primary),#1E40AF);
+        color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+        ${(S.user.name || 'U').substring(0,1).toUpperCase()}
+      </div>
+      <div style="font-size:16px;font-weight:600;">${esc(S.user.name)}</div>
+      <div style="font-size:12.5px;color:var(--ink-2);margin-top:2px;">${esc(S.user.department || '')}</div>
+    </div>
+    <div class="card">
+      <div class="detail-row"><span class="k">Employee ID</span><span class="v">${esc(S.user.id)}</span></div>
+      <div class="detail-row"><span class="k">Role</span><span class="v">${esc(S.user.role)}</span></div>
+      <div class="detail-row"><span class="k">Department</span><span class="v">${esc(S.user.department || '—')}</span></div>
+    </div>
+    <button class="btn btn-danger btn-block" data-action="logout">Sign Out</button>`;
+}
+
+/* ---------- My Attendance History ---------- */
+async function loadMyAttendance() {
+  S.myAtt.loaded = false; render();
+  // getMyAttendance takes 3 args (employeeId, month, year) -> use dedicated call
+  try {
+    const res = await myAttendanceCall(S.user.id, S.myAtt.month, S.myAtt.year);
+    S.myAtt.rows = res.rows; S.myAtt.summary = res.summary;
+  } catch (err) {
+    showToast('Could not load attendance: ' + err.message, true);
+  }
+  S.myAtt.loaded = true; render();
+}
+function myAttendanceCall(employeeId, month, year) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err)))).getMyAttendance(employeeId, month, year);
+  });
+}
+
+function statusBadge(status) {
+  const s = (status || '').toLowerCase();
+  const map = { present: 'present', holiday: 'holiday', leave: 'leave', 'week off': 'weekoff', absent: 'absent' };
+  const cls = map[s] || 'present';
+  return `<span class="badge ${cls}">${esc(status || 'Present')}</span>`;
+}
+function isLateVal(v) { return v && /min/i.test(v); }
+
+function renderMyHistory() {
+  const monthOpts = MONTH_NAMES.map((m, i) => `<option value="${i}" ${i === S.myAtt.month ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOpts = currentYearOptions().map(y => `<option value="${y}" ${y === S.myAtt.year ? 'selected' : ''}>${y}</option>`).join('');
+  const sm = S.myAtt.summary || { present: 0, late: 0, early: 0, workingHours: '0.0' };
+
+  let body;
+  if (!S.myAtt.loaded) {
+    body = `<div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div>Loading attendance…</div>`;
+  } else if (!S.myAtt.rows.length) {
+    body = `<div class="empty-state"><div class="big-ic">🗒️</div>No attendance records found for this month.</div>`;
+  } else if (S.myAtt.view === 'cards') {
+    body = S.myAtt.rows.map(r => `
+      <div class="att-card">
+        <div class="top-row"><span class="date">${esc(r.date)}</span>${statusBadge(r.status)}</div>
+        <div class="grid3">
+          <div><div class="lbl">Punch In</div><div class="v ${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.punchIn || '--')}</div></div>
+          <div><div class="lbl">Punch Out</div><div class="v ${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.punchOut || '--')}</div></div>
+          <div><div class="lbl">Hours</div><div class="v">${esc(r.workingHours || '--')}</div></div>
+        </div>
+      </div>`).join('');
+  } else {
+    body = `<div class="table-wrap"><div class="table-scroll"><table class="att-table">
+      <thead><tr><th>Date</th><th>Punch In</th><th>Punch Out</th><th>Hours</th><th>Late</th><th>Early</th><th>Status</th></tr></thead>
+      <tbody>${S.myAtt.rows.map(r => `
+        <tr>
+          <td>${esc(r.date)}</td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.punchIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.punchOut || '--')}</td>
+          <td>${esc(r.workingHours || '--')}</td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : 'green'}">${esc(r.lateIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : 'green'}">${esc(r.earlyOut || '--')}</td>
+          <td>${statusBadge(r.status)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div></div>`;
+  }
+
+  return `
+    <div class="filter-bar">
+      <select data-action="my-month">${monthOpts}</select>
+      <select data-action="my-year">${yearOpts}</select>
+      <div style="margin-left:auto;display:flex;gap:6px;">
+        <button class="btn btn-ghost btn-sm ${S.myAtt.view === 'table' ? 'btn-primary' : ''}" data-action="my-view-table">Table</button>
+        <button class="btn btn-ghost btn-sm ${S.myAtt.view === 'cards' ? 'btn-primary' : ''}" data-action="my-view-cards">Cards</button>
+      </div>
+    </div>
+    <div class="summary-grid wide">
+      <div class="summary-card present"><div class="val">${sm.present}</div><div class="lbl">Present</div></div>
+      <div class="summary-card late"><div class="val">${sm.late}</div><div class="lbl">Late</div></div>
+      <div class="summary-card hours"><div class="val">${sm.workingHours}h</div><div class="lbl">Work Hrs</div></div>
+    </div>
+    ${body}`;
+}
+</script>
