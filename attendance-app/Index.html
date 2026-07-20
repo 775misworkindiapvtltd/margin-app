@@ -26,10 +26,33 @@
     if (window.__appBooted) return; // app already started fine, ignore later runtime errors here
     showBootFailure_(e && e.message ? e.message : 'Unknown script error');
   });
+  // IMPORTANT: boot() in AppScript.html is an async function. If it throws
+  // (e.g. inside render()), that becomes an "unhandledrejection", NOT a
+  // regular "error" event — the listener above alone would never catch it,
+  // which is exactly why this page could go blank with "no error thrown".
+  window.addEventListener('unhandledrejection', function (e) {
+    if (window.__appBooted) return;
+    var reason = e && e.reason;
+    var msg = (reason && reason.message) ? reason.message : String(reason || 'Unknown promise rejection');
+    var stack = (reason && reason.stack) ? ('\n' + reason.stack) : '';
+    showBootFailure_(msg + stack);
+  });
   setTimeout(function () {
-    if (!window.__appBooted) {
-      showBootFailure_('The app script did not finish starting in time (no error was thrown, but nothing loaded).');
+    if (window.__appBooted) return;
+    if (typeof window.bootApp !== 'function') {
+      // The most common real-world cause: AppScript.html (it's a large file,
+      // ~900 lines) got cut off partway through when it was copy-pasted into
+      // the Apps Script editor. Everything above the cut point still saved
+      // and parsed fine (so no syntax error), but bootApp() — defined near
+      // the very end of the file — never made it in, so it doesn't exist.
+      showBootFailure_(
+        'bootApp() is not defined. This means AppScript.html was pasted incompletely — ' +
+        'most likely the copy-paste got cut off before reaching the end of that file ' +
+        '(it is a large file, so this is the #1 cause of this exact error).'
+      );
+      return;
     }
+    showBootFailure_('The app script did not finish starting in time (no error was thrown, but nothing loaded).');
   }, 6000);
   function showBootFailure_(details) {
     var app = document.getElementById('app');
@@ -55,5 +78,21 @@
 </script>
 
 <?!= include('AppScript') ?>
+
+<script>
+  // Explicitly start the app now that AppScript.html has been included above.
+  // If AppScript.html was truncated during copy-paste, bootApp will be
+  // undefined here and this throws immediately (caught by the 'error'
+  // listener above) instead of silently hanging for 6 seconds.
+  if (typeof bootApp === 'function') {
+    bootApp();
+  } else {
+    showBootFailure_(
+      'bootApp() is not defined right after loading AppScript.html. This means AppScript.html ' +
+      'was pasted incompletely into the Apps Script editor — most likely the copy-paste got cut ' +
+      'off before reaching the end of that file (it is a large file, so this is the #1 cause of this error).'
+    );
+  }
+</script>
 </body>
 </html>

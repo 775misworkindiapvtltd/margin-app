@@ -916,9 +916,22 @@ async function submitSettings() {
   }
 }
 
-/* Kick things off */
-(async function boot() {
+/**
+ * Starts the app. Deliberately a NAMED function (not an auto-invoked IIFE)
+ * and called from Index.html — NOT from the bottom of this file.
+ *
+ * Why: this file is large (~900 lines). If it gets cut off partway through
+ * a copy-paste into the Apps Script editor, everything ABOVE the cut point
+ * still saves fine, but anything relying on code at the very end of the
+ * file (like an auto-run call) would silently never execute — which is
+ * exactly the "no error thrown, but nothing loaded" symptom. By having
+ * Index.html call bootApp() explicitly right after this file is included,
+ * a truncated paste is instead detected immediately and clearly (see
+ * Index.html), instead of hanging with no explanation.
+ */
+async function bootApp() {
   S.ready = true; render(); startClock();
+  window.__appBooted = true; // tells the Index.html watchdog the app started successfully
   try { await loadAppSettings(); } catch (err) { /* non-fatal */ }
-})();
+}
 </script>
