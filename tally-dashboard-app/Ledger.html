@@ -1,0 +1,96 @@
+<script>
+/* ============================= LEDGER (party statement + print/PDF) ============================= */
+async function selectLedgerParty(name){
+  S.ledger.selected=name;S.ledger.detail=null;S.ledger.loading=true;render();
+  try{
+    const detail=await runServer('getLedgerForParty',name);
+    S.ledger.detail=detail;
+  }catch(err){ showToast("Ledger load error: "+err.message,true); }
+  S.ledger.loading=false;render();
+}
+
+function renderLedgerPage(){
+  const q=(S.ledger.search||'').toLowerCase();
+  const parties=S.balanceParties.filter(p=>!q||p.name.toLowerCase().includes(q));
+
+  const partyRows=parties.map(p=>`
+    <div class="party-row ${S.ledger.selected===p.name?'active':''}" data-action="select-party" data-name="${esc(p.name)}">
+      <div class="pn">${esc(p.name)}</div>
+      <div class="pg">${esc(p.group)}${p.mobile?' · '+esc(p.mobile):''}</div>
+      <div class="pb" style="color:${p.closingBalance<0?'var(--success)':'var(--ink)'};">${fmtINR(p.closingBalance)}</div>
+    </div>`).join('');
+
+  let detailHtml;
+  if(S.ledger.loading){
+    detailHtml=`<div class="ledger-empty"><div class="spinner" style="margin:0 auto 14px;"></div>Loading ledger…</div>`;
+  } else if(!S.ledger.selected || !S.ledger.detail){
+    detailHtml=`<div class="ledger-empty"><div class="big" style="font-family:'Space Grotesk',sans-serif;font-size:15px;color:var(--ink-secondary);font-weight:600;margin-bottom:6px;">Select a party</div>Left list se koi party choose karein unka ledger statement dekhne ke liye.</div>`;
+  } else {
+    const d=S.ledger.detail;
+    const h=d.header;
+    const entryRows=d.entries.map(e=>`
+      <tr>
+        <td>${esc(e.date)}</td>
+        <td>${esc(e.particular)}</td>
+        <td>${esc(e.vchType)}</td>
+        <td>${esc(e.vchNo)}</td>
+        <td class="num">${e.debit?fmtNum(e.debit):''}</td>
+        <td class="num">${e.credit?fmtNum(e.credit):''}</td>
+        <td class="num">${fmtNum(Math.abs(e.balance))} ${e.balance>=0?'Dr':'Cr'}</td>
+      </tr>`).join('');
+    detailHtml=`
+      <div class="ledger-toolbar">
+        <div style="font-weight:700;font-size:13px;">${esc(h.name)}</div>
+        <div class="spacer"></div>
+        <button class="btn btn-gold" data-action="ledger-print">🖨 Print / Download PDF</button>
+      </div>
+      <div class="ledger-scroll">
+        <div class="ledger-print-area">
+          <div class="ledger-co-head">
+            <div class="co-name">${esc(h.name)}</div>
+            <div class="co-sub">${esc(h.address||'')}${h.state?', '+esc(h.state):''}${h.pincode&&h.pincode!=='NA'?' - '+esc(h.pincode):''}</div>
+            <div class="co-sub">${h.mobile?'Mobile: '+esc(h.mobile):''}${h.email&&h.email!=='NA'?' · Email: '+esc(h.email):''}</div>
+          </div>
+          <div class="ledger-title-bar">Ledger Account</div>
+          <div class="ledger-party-info">
+            <div><span class="lbl">Group:</span> ${esc(h.group)} ${h.subgroup?'('+esc(h.subgroup)+')':''}</div>
+            <div><span class="lbl">Contact Person:</span> ${esc(h.contactPerson)||'-'}</div>
+            <div><span class="lbl">Credit Period:</span> ${esc(h.creditPeriod)||'-'}</div>
+            <div><span class="lbl">Credit Limit:</span> ${esc(h.creditLimit)||'-'}</div>
+            <div><span class="lbl">Bill-by-Bill:</span> ${esc(h.billByBill)||'-'}</div>
+          </div>
+          <table class="ledger-table">
+            <thead><tr>
+              <th>Date</th><th>Particulars</th><th>Vch Type</th><th>Vch No</th>
+              <th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th>
+            </tr></thead>
+            <tbody>
+              <tr class="opening-row">
+                <td>${esc(d.opening.date)}</td><td>${esc(d.opening.particular)}</td><td></td><td></td>
+                <td class="num">${d.opening.debit?fmtNum(d.opening.debit):''}</td>
+                <td class="num">${d.opening.credit?fmtNum(d.opening.credit):''}</td>
+                <td class="num">${fmtNum(Math.abs(d.opening.balance))} ${d.opening.balance>=0?'Dr':'Cr'}</td>
+              </tr>
+              ${entryRows}
+              <tr class="closing-row">
+                <td>${esc(d.closing.date)}</td><td>${esc(d.closing.particular)}</td><td></td><td></td>
+                <td class="num">${d.closing.debit?fmtNum(d.closing.debit):''}</td>
+                <td class="num">${d.closing.credit?fmtNum(d.closing.credit):''}</td>
+                <td class="num">${fmtNum(Math.abs(d.closing.balance))} ${d.closing.balance>=0?'Dr':'Cr'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="ledger-shell">
+      <div class="ledger-party-list">
+        <div class="ledger-search"><input type="text" placeholder="Search party…" data-action="ledger-search" value="${esc(S.ledger.search)}"></div>
+        <div class="party-scroll">${partyRows||`<div class="empty-state"><div class="big">No parties</div></div>`}</div>
+      </div>
+      <div class="ledger-detail"><div class="ledger-wrap">${detailHtml}</div></div>
+    </div>`;
+}
+</script>
