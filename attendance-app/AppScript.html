@@ -1,0 +1,924 @@
+<script>
+/* ================================================================
+ * SMART ATTENDANCE — ALL CLIENT-SIDE JAVASCRIPT IN ONE FILE
+ * ================================================================
+ * This single file contains everything that used to be split across
+ * Common.html + Capture.html + Dashboard.html + Admin.html.
+ * It was merged into ONE file specifically to eliminate copy-paste
+ * corruption risk when pasting into the Apps Script editor — fewer
+ * files to copy means fewer chances of a broken/partial paste.
+ *
+ * If you ever see "Page Failed to Load" or a blank white screen after
+ * login, it almost always means this file's content got corrupted or
+ * only partially pasted. Fix: open this file on GitHub, click "Raw",
+ * select all (Ctrl+A), copy (Ctrl+C), then in Apps Script select all
+ * the existing content of AppScript.html and delete it completely
+ * before pasting the fresh copy. Save, then redeploy.
+ * ================================================================ */
+
+/* ============================================================
+ * CONFIG
+ * ============================================================ */
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/* ============================================================
+ * STATE
+ * ============================================================ */
+let S = {
+  ready: false, loadError: "", user: null, page: "dashboard", sidebarOpen: false,
+  today: { punchedIn: false, punchedOut: false, punchInTime: "", punchOutTime: "" },
+  toast: null, loginError: "", submitting: false,
+
+  // Company / office settings (Company Name, In Time, Out Time, Allow Late Time) — loaded from the "Settings" sheet
+  settings: { companyName: 'Smart Attendance', inTime: '10:00', outTime: '19:00', allowLate: 0 },
+
+  // Employee: attendance history
+  myAtt: { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' },
+
+  // Capture flow (selfie + GPS) shared by Punch In / Punch Out
+  capture: null, // { type:'IN'|'OUT', gpsStatus, gpsError, lat, lng, address, photoDataUrl, camReady, stream }
+
+  // Admin
+  admin: {
+    employees: [], employeesLoaded: false,
+    entries: [], entriesLoaded: false,
+    filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' },
+    viewEntry: null,
+    addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false,
+
+    // Settings page (Company Name / In Time / Out Time / Allow Late Time)
+    settingsForm: null, settingsLoaded: false, settingsError: '', settingsSaving: false
+  },
+
+  photoPreviewUrl: null
+};
+
+/* ============================================================ APPS SCRIPT BRIDGE ============================================================ */
+function runServer(fnName, arg) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error("google.script.run not available — open this page via the Apps Script /exec URL.")); return;
+    }
+    let call = google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err))));
+    arg === undefined ? call[fnName]() : call[fnName](arg);
+  });
+}
+
+/* ============================================================ HELPERS ============================================================ */
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";"); }
+function showToast(msg, isErr) {
+  S.toast = { msg, isErr }; render();
+  setTimeout(() => { S.toast = null; const t = document.querySelector('.toast'); if (t) t.remove(); }, 3200);
+}
+function currentYearOptions() {
+  const y = new Date().getFullYear(); const arr = [];
+  for (let i = y - 2; i <= y + 1; i++) arr.push(i);
+  return arr;
+}
+
+/* ============================================================ LIVE CLOCK ============================================================ */
+function startClock() {
+  setInterval(() => {
+    const timeEl = document.getElementById('liveTime');
+    const dateEl = document.getElementById('liveDate');
+    if (!timeEl && !dateEl) return;
+    const d = new Date();
+    const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; const pad = n => String(n).padStart(2, '0');
+    if (timeEl) timeEl.textContent = pad(h12) + ':' + pad(m) + ':' + pad(s) + ' ' + ampm;
+    if (dateEl) dateEl.textContent = pad(d.getDate()) + ' ' + MONTH_SHORT[d.getMonth()] + ' ' + d.getFullYear();
+  }, 1000);
+}
+
+/* ============================================================ LOGIN / LOGOUT ============================================================ */
+// google.script.run does not support multiple args cleanly through our single-arg runServer()
+// wrapper, so login uses its own two-argument call.
+function loginCall(employeeId, password) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error("google.script.run not available — open via the Apps Script /exec URL.")); return;
+    }
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err)))).login(employeeId, password);
+  });
+}
+
+async function handleLoginSubmit(id, pw) {
+  if (!id || !pw) { S.loginError = "Please enter Employee ID and Password."; render(); return; }
+  S.loginError = ""; S.submitting = true; render();
+  try {
+    const res = await loginCall(id.trim(), pw);
+    S.submitting = false;
+    if (res.status !== 'ok') { S.loginError = res.message || 'Login failed.'; render(); return; }
+    S.user = res.user;
+    S.page = (S.user.role === 'Admin') ? 'admin-entries' : 'dashboard';
+    render();
+    if (S.user.role !== 'Admin') { await loadTodayStatus(); }
+    render();
+  } catch (err) {
+    S.submitting = false; S.loginError = err.message; render();
+  }
+}
+
+function doLogout() {
+  S.user = null; S.page = 'dashboard'; S.sidebarOpen = false;
+  S.myAtt = { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' };
+  S.admin = {
+    employees: [], employeesLoaded: false, entries: [], entriesLoaded: false,
+    filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' },
+    viewEntry: null, addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false,
+    settingsForm: null, settingsLoaded: false, settingsError: '', settingsSaving: false
+  };
+  render();
+}
+
+async function loadTodayStatus() {
+  try {
+    const st = await runServer('getTodayStatus', S.user.id);
+    S.today = st;
+  } catch (err) { showToast("Could not load today's status: " + err.message, true); }
+}
+
+/* ============================================================ APP SETTINGS (Company Name / In Time / Out Time / Allow Late Time) ============================================================ */
+async function loadAppSettings() {
+  try {
+    const res = await runServer('getAppSettings');
+    S.settings = res;
+  } catch (err) {
+    // Non-fatal — keep the client-side defaults if this fails (e.g. before first deploy/setup).
+  }
+  render();
+}
+
+/* ============================================================ NAV ============================================================ */
+function navigateTo(page) {
+  S.sidebarOpen = false; S.page = page; render();
+  if (page === 'history' && !S.myAtt.loaded) loadMyAttendance();
+  if (page === 'admin-entries') loadAdminEntries();
+  if (page === 'admin-employees' && !S.admin.employeesLoaded) loadAdminEmployees();
+  if (page === 'admin-settings') loadAdminSettings();
+}
+
+/* ============================================================ EVENT DELEGATION ============================================================ */
+document.addEventListener('submit', function (e) {
+  if (e.target && e.target.id === 'loginForm') {
+    e.preventDefault();
+    handleLoginSubmit(document.getElementById('loginId').value, document.getElementById('loginPw').value);
+  }
+  if (e.target && e.target.id === 'addEmpForm') {
+    e.preventDefault();
+    submitAddEmployee();
+  }
+});
+
+document.addEventListener('change', function (e) {
+  const el = e.target;
+  if (el.getAttribute('data-action') === 'my-month') { S.myAtt.month = parseInt(el.value, 10); loadMyAttendance(); }
+  if (el.getAttribute('data-action') === 'my-year') { S.myAtt.year = parseInt(el.value, 10); loadMyAttendance(); }
+  if (el.getAttribute('data-action') === 'adm-month') { S.admin.filters.month = parseInt(el.value, 10); loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-year') { S.admin.filters.year = parseInt(el.value, 10); loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-emp') { S.admin.filters.employeeId = el.value; loadAdminEntries(); }
+  if (el.getAttribute('data-action') === 'adm-date') { S.admin.filters.date = el.value; loadAdminEntries(); }
+});
+
+document.addEventListener('click', function (e) {
+  const el = e.target.closest('[data-action]'); if (!el) return;
+  const a = el.getAttribute('data-action');
+
+  if (a === 'nav') { navigateTo(el.getAttribute('data-page')); return; }
+  if (a === 'logout') { doLogout(); return; }
+  if (a === 'toggle-sidebar') { S.sidebarOpen = !S.sidebarOpen; render(); return; }
+
+  if (a === 'open-punch-in') { openCapture('IN'); return; }
+  if (a === 'open-punch-out') { openCapture('OUT'); return; }
+  if (a === 'close-capture') { closeCapture(); return; }
+  if (a === 'retry-gps') { requestGPS(); return; }
+  if (a === 'retake-photo') { retakePhoto(); return; }
+  if (a === 'confirm-submit') { submitPunch(); return; }
+
+  if (a === 'my-view-table') { S.myAtt.view = 'table'; render(); return; }
+  if (a === 'my-view-cards') { S.myAtt.view = 'cards'; render(); return; }
+
+  if (a === 'view-entry') { openViewEntry(el.getAttribute('data-idx')); return; }
+  if (a === 'close-view-entry') { S.admin.viewEntry = null; render(); return; }
+  if (a === 'view-entry-overlay') { if (el === e.target) { S.admin.viewEntry = null; render(); } return; }
+
+  if (a === 'preview-photo') { S.photoPreviewUrl = el.getAttribute('data-url'); render(); return; }
+  if (a === 'close-photo-preview') { S.photoPreviewUrl = null; render(); return; }
+
+  if (a === 'open-add-employee') { openAddEmployee(); return; }
+  if (a === 'close-add-employee') { S.admin.addEmpOpen = false; render(); return; }
+  if (a === 'add-employee-overlay') { if (el === e.target) { S.admin.addEmpOpen = false; render(); } return; }
+  if (a === 'save-add-employee') { submitAddEmployee(); return; }
+
+  if (a === 'save-settings') { submitSettings(); return; }
+});
+
+document.addEventListener('input', function (e) {
+  const el = e.target;
+  if (el.hasAttribute('data-emp-field')) {
+    if (!S.admin.addEmpForm) return;
+    S.admin.addEmpForm[el.getAttribute('data-emp-field')] = el.value;
+  }
+  if (el.hasAttribute('data-set-field')) {
+    if (!S.admin.settingsForm) return;
+    S.admin.settingsForm[el.getAttribute('data-set-field')] = el.value;
+  }
+});
+
+/* ============================================================ RENDER LOOP ============================================================ */
+function render() {
+  const app = document.getElementById('app');
+  if (!S.ready) { app.innerHTML = '<div class="loading-screen"><div class="spinner"></div><div>Loading Attendance System…</div></div>'; return; }
+  if (S.loadError) { app.innerHTML = '<div class="login-wrap"><div class="login-card"><div class="login-top"><div class="icon-badge">⚠️</div><h1>Setup Required</h1></div><div class="login-body"><div class="login-error">' + esc(S.loadError) + '</div><button class="btn btn-primary btn-block" style="margin-top:10px;" onclick="location.reload()">Retry</button></div></div></div>'; return; }
+  if (!S.user) { app.innerHTML = renderLogin(); return; }
+
+  let html = "";
+  if (S.user.role === 'Admin') {
+    html = renderAdminShell();
+  } else {
+    html = renderEmployeeShell();
+  }
+  app.innerHTML = html;
+
+  renderCaptureOverlay();
+  renderPhotoPreviewOverlay();
+
+  if (S.toast) {
+    const old = document.querySelector('.toast'); if (old) old.remove();
+    const d = document.createElement('div');
+    d.className = 'toast' + (S.toast.isErr ? ' err' : '');
+    d.innerHTML = '<span>' + (S.toast.isErr ? '⚠️' : '✅') + '</span>' + esc(S.toast.msg);
+    document.body.appendChild(d);
+  }
+}
+
+function renderLogin() {
+  return `
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-top">
+      <div class="icon-badge">🕒</div>
+      <h1>${esc(S.settings.companyName || 'Smart Attendance')}</h1>
+      <p>Sign in with your Employee ID to continue</p>
+    </div>
+    <div class="login-body">
+      ${S.loginError ? `<div class="login-error">${esc(S.loginError)}</div>` : ""}
+      <form id="loginForm">
+        <div class="field"><label>Employee ID</label><input type="text" id="loginId" autocomplete="username" placeholder="e.g. EMP001" required></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPw" autocomplete="current-password" placeholder="••••••" required></div>
+        <button type="submit" class="btn btn-primary btn-block" ${S.submitting ? 'disabled' : ''}>${S.submitting ? '<span class="spinner spinner-sm"></span> Signing in…' : 'Sign In'}</button>
+      </form>
+    </div>
+  </div></div>`;
+}
+
+/* ============================================================
+ * SELFIE + GPS CAPTURE FLOW
+ * Shared modal used for both Punch In and Punch Out.
+ * ============================================================ */
+function openCapture(type) {
+  if (type === 'IN' && S.today.punchedIn) { showToast('You have already punched in today.', true); return; }
+  if (type === 'OUT' && (!S.today.punchedIn || S.today.punchedOut)) {
+    showToast(!S.today.punchedIn ? 'Please Punch In first.' : 'You have already punched out today.', true);
+    return;
+  }
+  S.capture = {
+    type: type,
+    gpsStatus: 'pending', gpsError: '', lat: null, lng: null,
+    camReady: false, camError: '', photoDataUrl: null, stream: null
+  };
+  render();
+  startCamera();
+  requestGPS();
+}
+
+function closeCapture() {
+  stopCamera();
+  S.capture = null;
+  const el = document.getElementById('captureOverlay'); if (el) el.remove();
+}
+
+function requestGPS() {
+  if (!S.capture) return;
+  S.capture.gpsStatus = 'pending'; S.capture.gpsError = ''; renderCaptureOverlay();
+  if (!navigator.geolocation) {
+    S.capture.gpsStatus = 'fail'; S.capture.gpsError = 'Geolocation not supported on this device/browser.';
+    renderCaptureOverlay(); return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    function (pos) {
+      if (!S.capture) return;
+      S.capture.gpsStatus = 'ok';
+      S.capture.lat = pos.coords.latitude;
+      S.capture.lng = pos.coords.longitude;
+      renderCaptureOverlay();
+    },
+    function (err) {
+      if (!S.capture) return;
+      S.capture.gpsStatus = 'fail';
+      S.capture.gpsError = (err.code === 1)
+        ? 'Location permission denied. Please allow location access in your browser settings and retry.'
+        : 'Could not fetch location. Please check your GPS/network and retry.';
+      renderCaptureOverlay();
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+async function startCamera() {
+  if (!S.capture) return;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      S.capture.camError = 'Camera not supported on this device/browser.'; renderCaptureOverlay(); return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    if (!S.capture) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    S.capture.stream = stream; S.capture.camReady = true; S.capture.camError = '';
+    renderCaptureOverlay();
+    const video = document.getElementById('camVideo');
+    if (video) { video.srcObject = stream; video.play().catch(function () {}); }
+  } catch (err) {
+    if (!S.capture) return;
+    S.capture.camError = 'Camera permission denied. Please allow camera access in your browser settings and retry.';
+    renderCaptureOverlay();
+  }
+}
+
+function stopCamera() {
+  if (S.capture && S.capture.stream) { S.capture.stream.getTracks().forEach(function (t) { t.stop(); }); S.capture.stream = null; }
+}
+
+function takePhoto() {
+  const video = document.getElementById('camVideo'); if (!video || !S.capture) return;
+  const canvas = document.createElement('canvas');
+  const size = Math.min(video.videoWidth || 480, video.videoHeight || 480);
+  canvas.width = 480; canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  const sx = (video.videoWidth - size) / 2, sy = (video.videoHeight - size) / 2;
+  ctx.drawImage(video, sx, sy, size, size, 0, 0, 480, 480);
+  S.capture.photoDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+  stopCamera();
+  S.capture.camReady = false;
+  renderCaptureOverlay();
+}
+
+function retakePhoto() {
+  if (!S.capture) return;
+  S.capture.photoDataUrl = null;
+  startCamera();
+}
+
+function canSubmitCapture() {
+  const c = S.capture; if (!c) return false;
+  return c.gpsStatus === 'ok' && !!c.photoDataUrl && !S.submitting;
+}
+
+async function submitPunch() {
+  const c = S.capture; if (!c) return;
+  if (c.gpsStatus !== 'ok') { showToast('Location permission required. Attendance cannot be marked without GPS.', true); return; }
+  if (!c.photoDataUrl) { showToast('Please capture a selfie before submitting.', true); return; }
+
+  S.submitting = true; renderCaptureOverlay();
+  const payload = {
+    employeeId: S.user.id,
+    employeeName: S.user.name,
+    lat: c.lat, lng: c.lng,
+    selfieBase64: c.photoDataUrl,
+    device: navigator.platform || 'Unknown',
+    browser: (navigator.userAgent || '').substring(0, 120)
+  };
+  try {
+    const res = (c.type === 'IN') ? await runServer('punchIn', payload) : await runServer('punchOut', payload);
+    S.submitting = false;
+    if (res.status !== 'ok') { showToast(res.message || 'Something went wrong.', true); renderCaptureOverlay(); return; }
+    if (c.type === 'IN') {
+      S.today.punchedIn = true; S.today.punchInTime = res.punchInTime;
+      showToast(res.late ? ('Punched In at ' + res.punchInTime + ' (' + res.lateBy + ')') : ('Punched In successfully at ' + res.punchInTime), false);
+    } else {
+      S.today.punchedOut = true; S.today.punchOutTime = res.punchOutTime;
+      showToast(res.early ? ('Punched Out at ' + res.punchOutTime + ' (' + res.earlyBy + ')') : ('Punched Out successfully at ' + res.punchOutTime), false);
+    }
+    closeCapture();
+    render();
+  } catch (err) {
+    S.submitting = false;
+    showToast('Submit failed: ' + err.message, true);
+    renderCaptureOverlay();
+  }
+}
+
+function renderCaptureOverlay() {
+  let el = document.getElementById('captureOverlay');
+  const c = S.capture;
+  if (!c) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'captureOverlay'; document.body.appendChild(el); }
+  el.className = 'overlay';
+
+  const gpsHtml = c.gpsStatus === 'ok'
+    ? '<div class="gps-status ok"><span class="dot2"></span>Location captured successfully</div>'
+    : c.gpsStatus === 'fail'
+      ? '<div class="gps-status fail"><span class="dot2"></span>' + esc(c.gpsError) + ' <button class="link-btn" style="margin-left:auto;" data-action="retry-gps">Retry</button></div>'
+      : '<div class="gps-status pending"><span class="dot2"></span>Fetching your location…</div>';
+
+  let camHtml = '';
+  if (c.photoDataUrl) {
+    camHtml = '<div class="cam-frame"><img src="' + c.photoDataUrl + '" alt="Selfie preview"></div>' +
+      '<div class="cam-actions"><button class="btn btn-ghost btn-block" data-action="retake-photo">🔄 Retake</button></div>';
+  } else if (c.camError) {
+    camHtml = '<div class="cam-frame" style="display:flex;align-items:center;justify-content:center;color:#F87171;font-size:12.5px;text-align:center;padding:16px;">' + esc(c.camError) + '</div>' +
+      '<div class="cam-actions"><button class="btn btn-ghost btn-block" data-action="retake-photo">🔄 Try Again</button></div>';
+  } else {
+    camHtml = '<div class="cam-frame"><video id="camVideo" autoplay playsinline muted></video></div>' +
+      '<div class="cam-actions"><button class="btn btn-primary btn-block" onclick="takePhoto()" ' + (c.camReady ? '' : 'disabled') + '>📸 Capture Selfie</button></div>';
+  }
+
+  el.innerHTML = `
+    <div class="capture-card">
+      <div class="capture-head">
+        <h3>${c.type === 'IN' ? '🟢 Punch In' : '🔴 Punch Out'}</h3>
+        <span class="close-x" data-action="close-capture">✕</span>
+      </div>
+      <div class="capture-body">
+        ${gpsHtml}
+        ${camHtml}
+        <button class="btn ${c.type === 'IN' ? 'btn-success' : 'btn-danger'} btn-block" style="margin-top:14px;"
+          data-action="confirm-submit" ${canSubmitCapture() ? '' : 'disabled'}>
+          ${S.submitting ? '<span class="spinner spinner-sm"></span> Submitting…' : (c.type === 'IN' ? '✔ Confirm Punch In' : '✔ Confirm Punch Out')}
+        </button>
+        <div class="punch-hint">Selfie aur Location dono zaroori hain. Inke bina submit nahi hoga.</div>
+      </div>
+    </div>`;
+
+  if (!c.photoDataUrl && c.stream) {
+    const video = document.getElementById('camVideo');
+    if (video && video.srcObject !== c.stream) { video.srcObject = c.stream; video.play().catch(function () {}); }
+  }
+}
+
+function renderPhotoPreviewOverlay() {
+  let el = document.getElementById('photoPreviewOverlay');
+  if (!S.photoPreviewUrl) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'photoPreviewOverlay'; document.body.appendChild(el); }
+  el.className = 'photo-preview';
+  el.innerHTML = '<span class="close-x" data-action="close-photo-preview">✕</span><img src="' + esc(S.photoPreviewUrl) + '" alt="Photo preview">';
+  el.onclick = function (e) { if (e.target === el) { S.photoPreviewUrl = null; render(); } };
+}
+
+/* ============================================================
+ * EMPLOYEE SHELL — Dashboard (punch) + Attendance History + Profile
+ * Bottom nav: Dashboard | Attendance | Profile
+ * ============================================================ */
+function renderEmployeeShell() {
+  const initials = (S.user.name || 'U').substring(0, 1).toUpperCase();
+  let inner = '';
+  if (S.page === 'history') inner = renderMyHistory();
+  else if (S.page === 'profile') inner = renderProfile();
+  else inner = renderDashboard();
+
+  return `
+  <div class="emp-shell">
+    <div class="emp-topbar">
+      <div class="brand"><div class="logo">${initials}</div><span>${esc(S.settings.companyName || 'Smart Attendance')}</span></div>
+      <div class="logout-ic" data-action="logout" title="Sign out">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </div>
+    </div>
+    <div class="emp-content">${inner}</div>
+    <div class="bottom-nav">
+      <div class="nav-item ${S.page === 'dashboard' ? 'active' : ''}" data-action="nav" data-page="dashboard"><span class="ic">🏠</span>Dashboard</div>
+      <div class="nav-item ${S.page === 'history' ? 'active' : ''}" data-action="nav" data-page="history"><span class="ic">📅</span>Attendance</div>
+      <div class="nav-item ${S.page === 'profile' ? 'active' : ''}" data-action="nav" data-page="profile"><span class="ic">👤</span>Profile</div>
+    </div>
+  </div>`;
+}
+
+function statusInfo() {
+  if (S.today.punchedOut) return { cls: 'out', label: 'Punched Out' };
+  if (S.today.punchedIn) return { cls: 'in', label: 'Punched In' };
+  return { cls: 'none', label: 'Not Punched Yet' };
+}
+
+function renderDashboard() {
+  const st = statusInfo();
+  let punchZone = '';
+  if (!S.today.punchedIn) {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn in" data-action="open-punch-in"><span class="ic">🟢</span>PUNCH IN</button>
+        <div class="punch-hint">Selfie aur Location zaroori hai punch karne ke liye.</div>
+      </div>`;
+  } else if (!S.today.punchedOut) {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn out" data-action="open-punch-out"><span class="ic">🔴</span>PUNCH OUT</button>
+        <div class="punch-hint">Punched In at <b>${esc(S.today.punchInTime)}</b></div>
+      </div>`;
+  } else {
+    punchZone = `
+      <div class="punch-zone">
+        <button class="punch-btn done" disabled><span class="ic">✅</span>DONE FOR TODAY</button>
+        <div class="done-banner" style="width:100%;margin-top:14px;">
+          <span class="ic">🎉</span>
+          <div>Aaj ka attendance complete ho gaya!<br><b>In:</b> ${esc(S.today.punchInTime)} &nbsp; <b>Out:</b> ${esc(S.today.punchOutTime)}</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="welcome-card">
+      <div class="row1">
+        <div><div class="greet">Welcome back,</div><div class="name">${esc(S.user.name)}</div></div>
+        <div class="clock"><div class="time" id="liveTime">--:--:--</div><div class="date" id="liveDate">--</div></div>
+      </div>
+      <div class="status-pill ${st.cls}"><span class="dot"></span>${st.label}</div>
+    </div>
+    ${punchZone}
+    <div class="card">
+      <div class="section-title">📊 Today's Summary</div>
+      <div class="summary-grid">
+        <div class="summary-card present"><div class="val">${S.today.punchInTime ? '✓' : '—'}</div><div class="lbl">Punch In</div><div style="font-size:12px;margin-top:4px;font-weight:600;">${esc(S.today.punchInTime || '--:--')}</div></div>
+        <div class="summary-card hours"><div class="val">${S.today.punchOutTime ? '✓' : '—'}</div><div class="lbl">Punch Out</div><div style="font-size:12px;margin-top:4px;font-weight:600;">${esc(S.today.punchOutTime || '--:--')}</div></div>
+      </div>
+    </div>`;
+}
+
+function renderProfile() {
+  return `
+    <div class="card" style="text-align:center;padding:26px 16px;">
+      <div style="width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg,var(--primary),#1E40AF);
+        color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+        ${(S.user.name || 'U').substring(0,1).toUpperCase()}
+      </div>
+      <div style="font-size:16px;font-weight:600;">${esc(S.user.name)}</div>
+      <div style="font-size:12.5px;color:var(--ink-2);margin-top:2px;">${esc(S.user.department || '')}</div>
+    </div>
+    <div class="card">
+      <div class="detail-row"><span class="k">Employee ID</span><span class="v">${esc(S.user.id)}</span></div>
+      <div class="detail-row"><span class="k">Role</span><span class="v">${esc(S.user.role)}</span></div>
+      <div class="detail-row"><span class="k">Department</span><span class="v">${esc(S.user.department || '—')}</span></div>
+    </div>
+    <button class="btn btn-danger btn-block" data-action="logout">Sign Out</button>`;
+}
+
+/* ---------- My Attendance History ---------- */
+async function loadMyAttendance() {
+  S.myAtt.loaded = false; render();
+  try {
+    const res = await myAttendanceCall(S.user.id, S.myAtt.month, S.myAtt.year);
+    S.myAtt.rows = res.rows; S.myAtt.summary = res.summary;
+  } catch (err) {
+    showToast('Could not load attendance: ' + err.message, true);
+  }
+  S.myAtt.loaded = true; render();
+}
+function myAttendanceCall(employeeId, month, year) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err)))).getMyAttendance(employeeId, month, year);
+  });
+}
+
+function statusBadge(status) {
+  const s = (status || '').toLowerCase();
+  const map = { present: 'present', holiday: 'holiday', leave: 'leave', 'week off': 'weekoff', absent: 'absent' };
+  const cls = map[s] || 'present';
+  return '<span class="badge ' + cls + '">' + esc(status || 'Present') + '</span>';
+}
+function isLateVal(v) { return v && /min/i.test(v); }
+
+function renderMyHistory() {
+  const monthOpts = MONTH_NAMES.map((m, i) => `<option value="${i}" ${i === S.myAtt.month ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOpts = currentYearOptions().map(y => `<option value="${y}" ${y === S.myAtt.year ? 'selected' : ''}>${y}</option>`).join('');
+  const sm = S.myAtt.summary || { present: 0, late: 0, early: 0, workingHours: '0.0' };
+
+  let body;
+  if (!S.myAtt.loaded) {
+    body = `<div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div>Loading attendance…</div>`;
+  } else if (!S.myAtt.rows.length) {
+    body = `<div class="empty-state"><div class="big-ic">🗒️</div>No attendance records found for this month.</div>`;
+  } else if (S.myAtt.view === 'cards') {
+    body = S.myAtt.rows.map(r => `
+      <div class="att-card">
+        <div class="top-row"><span class="date">${esc(r.date)}</span>${statusBadge(r.status)}</div>
+        <div class="grid3">
+          <div><div class="lbl">Punch In</div><div class="v ${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.punchIn || '--')}</div></div>
+          <div><div class="lbl">Punch Out</div><div class="v ${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.punchOut || '--')}</div></div>
+          <div><div class="lbl">Hours</div><div class="v">${esc(r.workingHours || '--')}</div></div>
+        </div>
+      </div>`).join('');
+  } else {
+    body = `<div class="table-wrap"><div class="table-scroll"><table class="att-table">
+      <thead><tr><th>Date</th><th>Punch In</th><th>Punch Out</th><th>Hours</th><th>Late</th><th>Early</th><th>Status</th></tr></thead>
+      <tbody>${S.myAtt.rows.map(r => `
+        <tr>
+          <td>${esc(r.date)}</td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.punchIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.punchOut || '--')}</td>
+          <td>${esc(r.workingHours || '--')}</td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : 'green'}">${esc(r.lateIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : 'green'}">${esc(r.earlyOut || '--')}</td>
+          <td>${statusBadge(r.status)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div></div>`;
+  }
+
+  return `
+    <div class="filter-bar">
+      <select data-action="my-month">${monthOpts}</select>
+      <select data-action="my-year">${yearOpts}</select>
+      <div style="margin-left:auto;display:flex;gap:6px;">
+        <button class="btn btn-ghost btn-sm ${S.myAtt.view === 'table' ? 'btn-primary' : ''}" data-action="my-view-table">Table</button>
+        <button class="btn btn-ghost btn-sm ${S.myAtt.view === 'cards' ? 'btn-primary' : ''}" data-action="my-view-cards">Cards</button>
+      </div>
+    </div>
+    <div class="summary-grid wide">
+      <div class="summary-card present"><div class="val">${sm.present}</div><div class="lbl">Present</div></div>
+      <div class="summary-card late"><div class="val">${sm.late}</div><div class="lbl">Late</div></div>
+      <div class="summary-card hours"><div class="val">${sm.workingHours}h</div><div class="lbl">Work Hrs</div></div>
+    </div>
+    ${body}`;
+}
+
+/* ============================================================
+ * ADMIN SHELL — Left Sidebar + Punch Entries + Employees + Settings
+ * ============================================================ */
+const ADMIN_NAV = [
+  { key: 'admin-entries', label: 'Punch Entries', ic: '🕒' },
+  { key: 'admin-employees', label: 'Employees', ic: '👥' },
+  { key: 'admin-settings', label: 'Settings', ic: '⚙️' }
+];
+
+function renderAdminShell() {
+  const navHtml = ADMIN_NAV.map(n => `
+    <div class="admin-nav-item ${S.page === n.key ? 'active' : ''}" data-action="nav" data-page="${n.key}">
+      <span class="ic">${n.ic}</span>${n.label}
+    </div>`).join('');
+
+  let inner = '';
+  if (S.page === 'admin-employees') inner = renderAdminEmployees();
+  else if (S.page === 'admin-settings') inner = renderAdminSettings();
+  else inner = renderAdminEntries();
+
+  const titleMap = { 'admin-entries': 'Punch Entries', 'admin-employees': 'Employees', 'admin-settings': 'Settings' };
+
+  return `
+  <div class="admin-shell">
+    <div class="admin-sidebar ${S.sidebarOpen ? 'open' : ''}">
+      <div class="brand"><div class="logo">SA</div><span>${esc(S.settings.companyName || 'Smart Attendance')}</span></div>
+      ${navHtml}
+      <div class="admin-nav-item logout" data-action="logout"><span class="ic">🚪</span>Logout</div>
+    </div>
+    <div class="admin-main">
+      <div class="admin-topbar">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="cursor:pointer;font-size:18px;display:none;" class="mobile-toggle" data-action="toggle-sidebar">☰</span>
+          <h2>${titleMap[S.page] || 'Admin'}</h2>
+        </div>
+        <div class="who">Signed in as <b>${esc(S.user.name)}</b> (Admin)</div>
+      </div>
+      <div class="admin-content">${inner}</div>
+    </div>
+  </div>`;
+}
+
+/* ---------- Punch Entries ---------- */
+async function loadAdminEntries() {
+  if (!S.admin.employeesLoaded) await loadAdminEmployees();
+  S.admin.entriesLoaded = false; render();
+  try {
+    const f = S.admin.filters;
+    const res = await adminEntriesCall({ month: f.month, year: f.year, employeeId: f.employeeId, date: f.date });
+    S.admin.entries = res;
+  } catch (err) {
+    showToast('Could not load punch entries: ' + err.message, true);
+  }
+  S.admin.entriesLoaded = true; render();
+}
+function adminEntriesCall(filters) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err.message || String(err)))).getAdminPunchEntries(filters);
+  });
+}
+
+function renderAdminEntries() {
+  const f = S.admin.filters;
+  const monthOpts = `<option value="-1" ${f.month === -1 ? 'selected' : ''}>All Months</option>` +
+    MONTH_NAMES.map((m, i) => `<option value="${i}" ${i === f.month ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOpts = `<option value="-1" ${f.year === -1 ? 'selected' : ''}>All Years</option>` +
+    currentYearOptions().map(y => `<option value="${y}" ${y === f.year ? 'selected' : ''}>${y}</option>`).join('');
+  const empOpts = `<option value="">All Employees</option>` +
+    S.admin.employees.map(e => `<option value="${esc(e.id)}" ${f.employeeId === e.id ? 'selected' : ''}>${esc(e.name)} (${esc(e.id)})</option>`).join('');
+
+  let body;
+  if (!S.admin.entriesLoaded) {
+    body = `<div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div>Loading entries…</div>`;
+  } else if (!S.admin.entries.length) {
+    body = `<div class="empty-state"><div class="big-ic">🗒️</div>No punch entries found for the selected filters.</div>`;
+  } else {
+    body = `<div class="table-wrap"><div class="table-scroll"><table class="att-table">
+      <thead><tr><th>Date</th><th>Employee</th><th>Punch In</th><th>Punch Out</th><th>Hours</th><th>Late</th><th>Early</th><th>Selfie</th><th>Action</th></tr></thead>
+      <tbody>${S.admin.entries.map((r, i) => `
+        <tr>
+          <td>${esc(r.date)}</td>
+          <td>${esc(r.empName)} <span style="color:var(--ink-2);font-size:11px;">(${esc(r.empId)})</span></td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.punchIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.punchOut || '--')}</td>
+          <td>${esc(r.workingHours || '--')}</td>
+          <td class="${isLateVal(r.lateIn) ? 'red' : 'green'}">${esc(r.lateIn || '--')}</td>
+          <td class="${isLateVal(r.earlyOut) ? 'red' : 'green'}">${esc(r.earlyOut || '--')}</td>
+          <td>${r.selfieIn ? `<img class="avatar-sm" src="${esc(r.selfieIn)}" data-action="preview-photo" data-url="${esc(r.selfieIn)}">` : '—'}</td>
+          <td><button class="link-btn" data-action="view-entry" data-idx="${i}">View</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div></div>`;
+  }
+
+  return `
+    <div class="filter-bar">
+      <select data-action="adm-month">${monthOpts}</select>
+      <select data-action="adm-year">${yearOpts}</select>
+      <select data-action="adm-emp">${empOpts}</select>
+    </div>
+    ${body}
+    ${renderViewEntryModal()}`;
+}
+
+function openViewEntry(idxStr) {
+  const idx = parseInt(idxStr, 10);
+  S.admin.viewEntry = S.admin.entries[idx] || null;
+  render();
+}
+
+function renderViewEntryModal() {
+  const r = S.admin.viewEntry; if (!r) return '';
+  const mapLink = (lat, lng) => (lat && lng) ? `https://www.google.com/maps?q=${lat},${lng}` : '';
+  return `
+  <div class="overlay" data-action="view-entry-overlay">
+    <div class="detail-modal">
+      <div class="dm-head"><h3>Attendance Details — ${esc(r.date)}</h3><span class="close-x" style="cursor:pointer;" data-action="close-view-entry">✕</span></div>
+      <div class="dm-body">
+        <div class="selfie-pair">
+          <div class="box">
+            ${r.selfieIn ? `<img src="${esc(r.selfieIn)}" data-action="preview-photo" data-url="${esc(r.selfieIn)}">` : `<div style="aspect-ratio:1/1;background:#F1F5F9;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);">No Photo</div>`}
+            <div class="cap">Punch In Selfie</div>
+          </div>
+          <div class="box">
+            ${r.selfieOut ? `<img src="${esc(r.selfieOut)}" data-action="preview-photo" data-url="${esc(r.selfieOut)}">` : `<div style="aspect-ratio:1/1;background:#F1F5F9;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);">No Photo</div>`}
+            <div class="cap">Punch Out Selfie</div>
+          </div>
+        </div>
+        <div class="detail-row"><span class="k">Employee</span><span class="v">${esc(r.empName)} (${esc(r.empId)})</span></div>
+        <div class="detail-row"><span class="k">Punch In</span><span class="v">${esc(r.punchIn || '--')}</span></div>
+        <div class="detail-row"><span class="k">Punch Out</span><span class="v">${esc(r.punchOut || '--')}</span></div>
+        <div class="detail-row"><span class="k">Working Hours</span><span class="v">${esc(r.workingHours || '--')}</span></div>
+        <div class="detail-row"><span class="k">Late In</span><span class="v ${isLateVal(r.lateIn) ? 'red' : ''}">${esc(r.lateIn || '--')}</span></div>
+        <div class="detail-row"><span class="k">Early Out</span><span class="v ${isLateVal(r.earlyOut) ? 'red' : ''}">${esc(r.earlyOut || '--')}</span></div>
+        <div class="detail-row"><span class="k">Address (In)</span><span class="v">${esc(r.addrIn || '--')}</span></div>
+        <div class="detail-row"><span class="k">Address (Out)</span><span class="v">${esc(r.addrOut || '--')}</span></div>
+        <div style="display:flex;gap:14px;margin-top:8px;">
+          ${mapLink(r.latIn, r.lngIn) ? `<a class="map-link" href="${mapLink(r.latIn, r.lngIn)}" target="_top">📍 View In-Location on Map</a>` : ''}
+        </div>
+        <div style="display:flex;gap:14px;">
+          ${mapLink(r.latOut, r.lngOut) ? `<a class="map-link" href="${mapLink(r.latOut, r.lngOut)}" target="_top">📍 View Out-Location on Map</a>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- Employees ---------- */
+async function loadAdminEmployees() {
+  try {
+    const res = await runServer('getEmployees');
+    S.admin.employees = res; S.admin.employeesLoaded = true;
+  } catch (err) {
+    showToast('Could not load employees: ' + err.message, true);
+  }
+  render();
+}
+
+function renderAdminEmployees() {
+  const rows = S.admin.employees;
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+      <button class="btn btn-primary" data-action="open-add-employee">+ Add Employee</button>
+    </div>
+    <div class="table-wrap"><div class="table-scroll"><table class="att-table">
+      <thead><tr><th>Employee ID</th><th>Name</th><th>Department</th><th>Role</th><th>Status</th></tr></thead>
+      <tbody>${rows.length ? rows.map(e => `
+        <tr>
+          <td>${esc(e.id)}</td><td>${esc(e.name)}</td><td>${esc(e.department || '--')}</td>
+          <td>${esc(e.role)}</td>
+          <td>${e.active ? '<span class="badge present">Active</span>' : '<span class="badge absent">Inactive</span>'}</td>
+        </tr>`).join('') : `<tr><td colspan="5"><div class="empty-state">No employees yet.</div></td></tr>`}</tbody>
+    </table></div></div>
+    ${renderAddEmployeeModal()}`;
+}
+
+function openAddEmployee() {
+  S.admin.addEmpOpen = true;
+  S.admin.addEmpForm = { id: '', name: '', department: '', role: 'Employee', password: '' };
+  S.admin.addEmpError = '';
+  render();
+}
+
+function renderAddEmployeeModal() {
+  if (!S.admin.addEmpOpen) return '';
+  const f = S.admin.addEmpForm;
+  return `
+  <div class="overlay" data-action="add-employee-overlay">
+    <div class="modal-card">
+      <div class="mc-head"><h3>Add New Employee</h3><span class="close-x" style="cursor:pointer;" data-action="close-add-employee">✕</span></div>
+      <div class="mc-body">
+        ${S.admin.addEmpError ? `<div class="login-error">${esc(S.admin.addEmpError)}</div>` : ''}
+        <form id="addEmpForm">
+          <div class="field"><label>Employee ID</label><input type="text" data-emp-field="id" value="${esc(f.id)}" placeholder="e.g. EMP002" required></div>
+          <div class="field"><label>Name</label><input type="text" data-emp-field="name" value="${esc(f.name)}" placeholder="Full Name" required></div>
+          <div class="field"><label>Department</label><input type="text" data-emp-field="department" value="${esc(f.department)}" placeholder="e.g. Operations"></div>
+          <div class="field"><label>Role</label>
+            <select data-emp-field="role">
+              <option value="Employee" ${f.role === 'Employee' ? 'selected' : ''}>Employee</option>
+              <option value="Admin" ${f.role === 'Admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </div>
+          <div class="field"><label>Password</label><input type="password" data-emp-field="password" value="${esc(f.password)}" placeholder="Set a login password" required></div>
+        </form>
+      </div>
+      <div class="mc-foot">
+        <button class="btn btn-ghost" data-action="close-add-employee">Cancel</button>
+        <button class="btn btn-primary" data-action="save-add-employee" ${S.admin.addEmpSaving ? 'disabled' : ''}>${S.admin.addEmpSaving ? '<span class="spinner spinner-sm"></span> Saving…' : 'Save Employee'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function submitAddEmployee() {
+  const f = S.admin.addEmpForm; if (!f) return;
+  if (!f.id.trim() || !f.name.trim() || !f.password.trim()) {
+    S.admin.addEmpError = 'Employee ID, Name and Password are required.'; render(); return;
+  }
+  S.admin.addEmpSaving = true; S.admin.addEmpError = ''; render();
+  try {
+    const res = await runServer('addEmployee', f);
+    S.admin.addEmpSaving = false;
+    if (res.status !== 'ok') { S.admin.addEmpError = res.message || 'Save failed.'; render(); return; }
+    S.admin.addEmpOpen = false;
+    await loadAdminEmployees();
+    showToast('Employee added successfully.', false);
+  } catch (err) {
+    S.admin.addEmpSaving = false; S.admin.addEmpError = err.message; render();
+  }
+}
+
+/* ---------- Settings (Company Name / In Time / Out Time / Allow Late Time) ---------- */
+async function loadAdminSettings() {
+  S.admin.settingsLoaded = false; render();
+  try {
+    const res = await runServer('getAppSettings');
+    S.admin.settingsForm = { companyName: res.companyName, inTime: res.inTime, outTime: res.outTime, allowLate: res.allowLate };
+    S.settings = res;
+  } catch (err) {
+    showToast('Could not load settings: ' + err.message, true);
+    S.admin.settingsForm = { companyName: S.settings.companyName, inTime: S.settings.inTime, outTime: S.settings.outTime, allowLate: S.settings.allowLate };
+  }
+  S.admin.settingsLoaded = true; render();
+}
+
+function renderAdminSettings() {
+  if (!S.admin.settingsLoaded || !S.admin.settingsForm) {
+    return `<div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div>Loading settings…</div>`;
+  }
+  const f = S.admin.settingsForm;
+  return `
+    <div class="card" style="max-width:460px;">
+      ${S.admin.settingsError ? `<div class="login-error">${esc(S.admin.settingsError)}</div>` : ''}
+      <div class="field"><label>Company Name</label><input type="text" data-set-field="companyName" value="${esc(f.companyName)}" placeholder="e.g. MIS Work India Pvt Ltd"></div>
+      <div class="field"><label>In Time (Office Start)</label><input type="time" data-set-field="inTime" value="${esc(f.inTime)}"></div>
+      <div class="field"><label>Out Time (Office End)</label><input type="time" data-set-field="outTime" value="${esc(f.outTime)}"></div>
+      <div class="field"><label>Allow Late Time (minutes grace period)</label><input type="number" min="0" data-set-field="allowLate" value="${esc(f.allowLate)}" placeholder="e.g. 10"></div>
+      <div class="punch-hint" style="margin-bottom:14px;">Employees punching in within the grace period after In Time will still be marked "On Time" instead of Late.</div>
+      <button class="btn btn-primary" data-action="save-settings" ${S.admin.settingsSaving ? 'disabled' : ''}>${S.admin.settingsSaving ? '<span class="spinner spinner-sm"></span> Saving…' : 'Save Settings'}</button>
+    </div>`;
+}
+
+async function submitSettings() {
+  const f = S.admin.settingsForm; if (!f) return;
+  if (!String(f.companyName || '').trim()) { S.admin.settingsError = 'Company Name is required.'; render(); return; }
+  if (!f.inTime || !f.outTime) { S.admin.settingsError = 'In Time and Out Time are required.'; render(); return; }
+  S.admin.settingsSaving = true; S.admin.settingsError = ''; render();
+  try {
+    const res = await runServer('saveAppSettings', f);
+    S.admin.settingsSaving = false;
+    if (res.status !== 'ok') { S.admin.settingsError = res.message || 'Save failed.'; render(); return; }
+    S.settings = res.settings;
+    showToast('Settings saved successfully.', false);
+    render();
+  } catch (err) {
+    S.admin.settingsSaving = false; S.admin.settingsError = err.message; render();
+  }
+}
+
+/* Kick things off */
+(async function boot() {
+  S.ready = true; render(); startClock();
+  try { await loadAppSettings(); } catch (err) { /* non-fatal */ }
+})();
+</script>
