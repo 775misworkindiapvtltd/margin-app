@@ -217,16 +217,28 @@ function render() {
   if (!S.user) { app.innerHTML = renderLogin(); return; }
 
   let html = "";
-  if (S.user.role === 'Admin') {
-    html = renderAdminShell();
-  } else {
-    html = renderEmployeeShell();
+  try {
+    if (S.user.role === 'Admin') {
+      if (typeof renderAdminShell !== 'function') throw new Error('MISSING_FILE:Admin.html');
+      html = renderAdminShell();
+    } else {
+      if (typeof renderEmployeeShell !== 'function') throw new Error('MISSING_FILE:Dashboard.html');
+      html = renderEmployeeShell();
+    }
+  } catch (err) {
+    app.innerHTML = renderScriptLoadError(err);
+    return;
   }
   app.innerHTML = html;
 
   // Overlays that live outside the main shell
-  renderCaptureOverlay();
-  renderPhotoPreviewOverlay();
+  try {
+    renderCaptureOverlay();
+    renderPhotoPreviewOverlay();
+  } catch (err) {
+    // Selfie/GPS capture modal failed to render — non-fatal, main page is already visible.
+    console.error('Capture overlay render failed:', err);
+  }
 
   if (S.toast) {
     const old = document.querySelector('.toast'); if (old) old.remove();
@@ -235,6 +247,34 @@ function render() {
     d.innerHTML = `<span>${S.toast.isErr ? '⚠️' : '✅'}</span>${esc(S.toast.msg)}`;
     document.body.appendChild(d);
   }
+}
+
+/**
+ * Shown when one of the HTML "module" scripts (Admin.html / Dashboard.html /
+ * Capture.html) failed to load — most commonly because its <script> content
+ * has a JavaScript syntax error from a bad copy-paste (corrupted backticks,
+ * partial file copied, or wrong file type used in the Apps Script editor).
+ */
+function renderScriptLoadError(err) {
+  const isMissing = /^MISSING_FILE:/.test(err && err.message || '');
+  const fileName = isMissing ? err.message.split(':')[1] : null;
+  return `
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-top"><div class="icon-badge">⚠️</div><h1>Page Failed to Load</h1></div>
+    <div class="login-body">
+      <div class="login-error" style="line-height:1.6;">
+        ${fileName ? `The <b>${esc(fileName)}</b> file's code did not load correctly.` : `A script on this page has an error: ${esc(err.message)}`}
+      </div>
+      <div style="font-size:12.5px;color:var(--ink-2);line-height:1.7;margin-top:10px;">
+        This almost always means a file's code got corrupted while copy-pasting into Apps Script
+        (common cause: backtick <code>\`</code> characters getting changed by the editor).<br><br>
+        <b>Fix:</b> Open GitHub, click the file, choose <b>"Raw"</b>, select all, copy, then in
+        Apps Script delete the file's existing content completely and paste fresh. Save, then
+        redeploy (Deploy → Manage deployments → Edit → New version) before reloading this page.
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:16px;" onclick="location.reload()">Reload Page</button>
+    </div>
+  </div></div>`;
 }
 
 function renderLogin() {
@@ -259,6 +299,6 @@ function renderLogin() {
 /* Kick things off */
 (async function boot() {
   S.ready = true; render(); startClock();
-  await loadAppSettings();
+  try { await loadAppSettings(); } catch (err) { /* non-fatal, defaults already in S.settings */ }
 })();
 </script>
