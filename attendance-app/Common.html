@@ -13,6 +13,9 @@ let S = {
   today: { punchedIn: false, punchedOut: false, punchInTime: "", punchOutTime: "" },
   toast: null, loginError: "", submitting: false,
 
+  // Company / office settings (Company Name, In Time, Out Time, Allow Late Time) — loaded from the "Settings" sheet
+  settings: { companyName: 'Smart Attendance', inTime: '10:00', outTime: '19:00', allowLate: 0 },
+
   // Employee: attendance history
   myAtt: { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' },
 
@@ -25,7 +28,10 @@ let S = {
     entries: [], entriesLoaded: false,
     filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' },
     viewEntry: null,
-    addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false
+    addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false,
+
+    // Settings page (Company Name / In Time / Out Time / Allow Late Time)
+    settingsForm: null, settingsLoaded: false, settingsError: '', settingsSaving: false
   },
 
   photoPreviewUrl: null
@@ -100,7 +106,12 @@ async function handleLoginSubmit(id, pw) {
 function doLogout() {
   S.user = null; S.page = 'dashboard'; S.sidebarOpen = false;
   S.myAtt = { month: new Date().getMonth(), year: new Date().getFullYear(), rows: [], summary: null, loaded: false, view: 'table' };
-  S.admin = { employees: [], employeesLoaded: false, entries: [], entriesLoaded: false, filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' }, viewEntry: null, addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false };
+  S.admin = {
+    employees: [], employeesLoaded: false, entries: [], entriesLoaded: false,
+    filters: { month: new Date().getMonth(), year: new Date().getFullYear(), employeeId: '', date: '' },
+    viewEntry: null, addEmpOpen: false, addEmpForm: null, addEmpError: '', addEmpSaving: false,
+    settingsForm: null, settingsLoaded: false, settingsError: '', settingsSaving: false
+  };
   render();
 }
 
@@ -111,12 +122,24 @@ async function loadTodayStatus() {
   } catch (err) { showToast("Could not load today's status: " + err.message, true); }
 }
 
+/* ============================================================ APP SETTINGS (Company Name / In Time / Out Time / Allow Late Time) ============================================================ */
+async function loadAppSettings() {
+  try {
+    const res = await runServer('getAppSettings');
+    S.settings = res;
+  } catch (err) {
+    // Non-fatal — keep the client-side defaults if this fails (e.g. before first deploy/setup).
+  }
+  render();
+}
+
 /* ============================================================ NAV ============================================================ */
 function navigateTo(page) {
   S.sidebarOpen = false; S.page = page; render();
   if (page === 'history' && !S.myAtt.loaded) loadMyAttendance();
   if (page === 'admin-entries') loadAdminEntries();
   if (page === 'admin-employees' && !S.admin.employeesLoaded) loadAdminEmployees();
+  if (page === 'admin-settings') loadAdminSettings();
 }
 
 /* ============================================================ EVENT DELEGATION ============================================================ */
@@ -170,6 +193,8 @@ document.addEventListener('click', e => {
   if (a === 'close-add-employee') { S.admin.addEmpOpen = false; render(); return; }
   if (a === 'add-employee-overlay') { if (el === e.target) { S.admin.addEmpOpen = false; render(); } return; }
   if (a === 'save-add-employee') { submitAddEmployee(); return; }
+
+  if (a === 'save-settings') { submitSettings(); return; }
 });
 
 document.addEventListener('input', e => {
@@ -177,6 +202,10 @@ document.addEventListener('input', e => {
   if (el.hasAttribute('data-emp-field')) {
     if (!S.admin.addEmpForm) return;
     S.admin.addEmpForm[el.getAttribute('data-emp-field')] = el.value;
+  }
+  if (el.hasAttribute('data-set-field')) {
+    if (!S.admin.settingsForm) return;
+    S.admin.settingsForm[el.getAttribute('data-set-field')] = el.value;
   }
 });
 
@@ -213,7 +242,7 @@ function renderLogin() {
   <div class="login-wrap"><div class="login-card">
     <div class="login-top">
       <div class="icon-badge">🕒</div>
-      <h1>Smart Attendance</h1>
+      <h1>${esc(S.settings.companyName || 'Smart Attendance')}</h1>
       <p>Sign in with your Employee ID to continue</p>
     </div>
     <div class="login-body">
@@ -230,5 +259,6 @@ function renderLogin() {
 /* Kick things off */
 (async function boot() {
   S.ready = true; render(); startClock();
+  await loadAppSettings();
 })();
 </script>

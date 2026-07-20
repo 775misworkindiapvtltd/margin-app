@@ -61,21 +61,35 @@ function reverseGeocode_(lat, lng) {
   return 'Lat: ' + lat + ', Lng: ' + lng;
 }
 
-/** Returns {isLate, label} comparing punch-in time against CONFIG.officeStartTime. */
-function computeLateIn_(punchInDate) {
-  var startParts = CONFIG.officeStartTime.split(':');
+/**
+ * Returns {isLate, label} comparing punch-in time against the office In Time
+ * (read from the "Settings" sheet). "Allow Late Time" is a grace period in
+ * minutes — punching in within the grace period still counts as On Time.
+ * Falls back to CONFIG.officeStartTime with 0 grace if settings is omitted.
+ */
+function computeLateIn_(punchInDate, settings) {
+  settings = settings || {};
+  var startStr = settings.inTime || CONFIG.officeStartTime;
+  var allowLate = settings.allowLate || 0;
+  var startParts = startStr.split(':');
   var startMinutes = parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10);
   var actualMinutes = punchInDate.getHours() * 60 + punchInDate.getMinutes();
-  if (actualMinutes > startMinutes) {
-    var diff = actualMinutes - startMinutes;
+  var diff = actualMinutes - startMinutes;
+  if (diff > allowLate) {
     return { isLate: true, label: diff + ' min late' };
   }
   return { isLate: false, label: 'On Time' };
 }
 
-/** Returns {isEarly, label} comparing punch-out time against CONFIG.officeEndTime. */
-function computeEarlyOut_(punchOutDate) {
-  var endParts = CONFIG.officeEndTime.split(':');
+/**
+ * Returns {isEarly, label} comparing punch-out time against the office Out Time
+ * (read from the "Settings" sheet). Falls back to CONFIG.officeEndTime if
+ * settings is omitted.
+ */
+function computeEarlyOut_(punchOutDate, settings) {
+  settings = settings || {};
+  var endStr = settings.outTime || CONFIG.officeEndTime;
+  var endParts = endStr.split(':');
   var endMinutes = parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10);
   var actualMinutes = punchOutDate.getHours() * 60 + punchOutDate.getMinutes();
   if (actualMinutes < endMinutes) {

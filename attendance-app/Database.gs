@@ -5,6 +5,7 @@
 
 var SHEET_EMP  = 'Employees';
 var SHEET_ATT  = 'Attendance';
+var SHEET_SET  = 'Settings';
 
 /* Employees columns (1-based) */
 var EMP_COL = { id: 1, name: 2, department: 3, role: 4, password: 5, active: 6 };
@@ -42,6 +43,15 @@ function ensureSheets_() {
     ]]);
     att.setFrozenRows(1);
   }
+
+  var set = ss.getSheetByName(SHEET_SET);
+  if (!set) {
+    set = ss.insertSheet(SHEET_SET);
+    set.getRange(1, 1, 1, 4).setValues([['Company Name', 'In Time', 'Out Time', 'Allow Late Time (mins)']]);
+    set.getRange(2, 1, 1, 4).setValues([['My Company', CONFIG.officeStartTime, CONFIG.officeEndTime, 0]]);
+    set.setFrozenRows(1);
+    set.setColumnWidths(1, 4, 160);
+  }
 }
 
 /* ---- generic sheet -> array-of-objects helper (kept local & simple, no header assumptions needed since we use fixed columns above) ---- */
@@ -62,6 +72,68 @@ function fmtTime_(d) {
 }
 function todayKey_() {
   return fmtDateKey_(new Date());
+}
+
+/* ============================================================
+ * SETTINGS (Company Name / In Time / Out Time / Allow Late Time)
+ * Row 2 of the "Settings" sheet holds the single active configuration.
+ * ============================================================ */
+var SET_COL = { companyName: 1, inTime: 2, outTime: 3, allowLate: 4 };
+
+/** Reads the Settings sheet and returns a plain object, falling back to CONFIG defaults if anything is missing/invalid. */
+function getSettings_() {
+  ensureSheets_();
+  var sh = getSheet_(SHEET_SET);
+  var row = sh.getRange(2, 1, 1, 4).getValues()[0];
+  var companyName = String(row[SET_COL.companyName - 1] || '').trim() || 'My Company';
+  var inTime = normalizeTimeStr_(row[SET_COL.inTime - 1]) || CONFIG.officeStartTime;
+  var outTime = normalizeTimeStr_(row[SET_COL.outTime - 1]) || CONFIG.officeEndTime;
+  var allowLate = parseInt(row[SET_COL.allowLate - 1], 10);
+  if (isNaN(allowLate) || allowLate < 0) allowLate = 0;
+  return { companyName: companyName, inTime: inTime, outTime: outTime, allowLate: allowLate };
+}
+
+/** Accepts either "HH:mm" strings or a Date/Time value from the sheet and normalizes to "HH:mm". */
+function normalizeTimeStr_(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, CONFIG.timeZone, 'HH:mm');
+  }
+  var s = String(val).trim();
+  var m = /^(\d{1,2}):(\d{2})/.exec(s);
+  if (m) return (m[1].length === 1 ? '0' + m[1] : m[1]) + ':' + m[2];
+  return '';
+}
+
+/** Client-facing: fetch current Settings (used by login screen + admin Settings page + late/early calc). */
+function getAppSettings() {
+  return getSettings_();
+}
+
+/** Admin: save Settings. payload = { companyName, inTime, outTime, allowLate } */
+function saveAppSettings(payload) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    ensureSheets_();
+    if (!payload) return { status: 'error', message: 'No data received.' };
+    var companyName = String(payload.companyName || '').trim();
+    var inTime = normalizeTimeStr_(payload.inTime);
+    var outTime = normalizeTimeStr_(payload.outTime);
+    var allowLate = parseInt(payload.allowLate, 10);
+    if (!companyName) return { status: 'error', message: 'Company Name is required.' };
+    if (!inTime) return { status: 'error', message: 'In Time must be a valid time (HH:mm).' };
+    if (!outTime) return { status: 'error', message: 'Out Time must be a valid time (HH:mm).' };
+    if (isNaN(allowLate) || allowLate < 0) allowLate = 0;
+
+    var sh = getSheet_(SHEET_SET);
+    sh.getRange(2, 1, 1, 4).setValues([[companyName, inTime, outTime, allowLate]]);
+    return { status: 'ok', settings: { companyName: companyName, inTime: inTime, outTime: outTime, allowLate: allowLate } };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ============================================================
@@ -149,7 +221,7 @@ function punchIn(payload) {
     var now = new Date();
     var address = reverseGeocode_(payload.lat, payload.lng);
     var selfieUrl = saveSelfieToDrive_(payload.selfieBase64, employeeId, 'IN');
-    var lateInfo = computeLateIn_(now);
+    var lateInfo = computeLateIn_(now, getSettings_());
 
     var sh = getSheet_(SHEET_ATT);
     if (existing) {
@@ -216,7 +288,7 @@ function punchOut(payload) {
     var address = reverseGeocode_(payload.lat, payload.lng);
     var selfieUrl = saveSelfieToDrive_(payload.selfieBase64, employeeId, 'OUT');
     var punchInTime = existing.values[ATT_COL.punchIn - 1];
-    var earlyInfo = computeEarlyOut_(now);
+    var earlyInfo = computeEarlyOut_(now, getSettings_());
     var hours = computeWorkingHours_(punchInTime, now);
 
     var sh = getSheet_(SHEET_ATT);

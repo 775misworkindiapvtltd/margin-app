@@ -5,7 +5,8 @@
 
 const ADMIN_NAV = [
   { key: 'admin-entries', label: 'Punch Entries', ic: '🕒' },
-  { key: 'admin-employees', label: 'Employees', ic: '👥' }
+  { key: 'admin-employees', label: 'Employees', ic: '👥' },
+  { key: 'admin-settings', label: 'Settings', ic: '⚙️' }
 ];
 
 function renderAdminShell() {
@@ -16,14 +17,15 @@ function renderAdminShell() {
 
   let inner = '';
   if (S.page === 'admin-employees') inner = renderAdminEmployees();
+  else if (S.page === 'admin-settings') inner = renderAdminSettings();
   else inner = renderAdminEntries();
 
-  const titleMap = { 'admin-entries': 'Punch Entries', 'admin-employees': 'Employees' };
+  const titleMap = { 'admin-entries': 'Punch Entries', 'admin-employees': 'Employees', 'admin-settings': 'Settings' };
 
   return `
   <div class="admin-shell">
     <div class="admin-sidebar ${S.sidebarOpen ? 'open' : ''}">
-      <div class="brand"><div class="logo">SA</div><span>Smart Attendance</span></div>
+      <div class="brand"><div class="logo">SA</div><span>${esc(S.settings.companyName || 'Smart Attendance')}</span></div>
       ${navHtml}
       <div class="admin-nav-item logout" data-action="logout"><span class="ic">🚪</span>Logout</div>
     </div>
@@ -225,6 +227,54 @@ async function submitAddEmployee() {
     showToast('Employee added successfully.', false);
   } catch (err) {
     S.admin.addEmpSaving = false; S.admin.addEmpError = err.message; render();
+  }
+}
+
+/* ---------- Settings (Company Name / In Time / Out Time / Allow Late Time) ---------- */
+async function loadAdminSettings() {
+  S.admin.settingsLoaded = false; render();
+  try {
+    const res = await runServer('getAppSettings');
+    S.admin.settingsForm = { companyName: res.companyName, inTime: res.inTime, outTime: res.outTime, allowLate: res.allowLate };
+    S.settings = res; // keep global settings (branding) in sync too
+  } catch (err) {
+    showToast('Could not load settings: ' + err.message, true);
+    S.admin.settingsForm = { companyName: S.settings.companyName, inTime: S.settings.inTime, outTime: S.settings.outTime, allowLate: S.settings.allowLate };
+  }
+  S.admin.settingsLoaded = true; render();
+}
+
+function renderAdminSettings() {
+  if (!S.admin.settingsLoaded || !S.admin.settingsForm) {
+    return `<div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div>Loading settings…</div>`;
+  }
+  const f = S.admin.settingsForm;
+  return `
+    <div class="card" style="max-width:460px;">
+      ${S.admin.settingsError ? `<div class="login-error">${esc(S.admin.settingsError)}</div>` : ''}
+      <div class="field"><label>Company Name</label><input type="text" data-set-field="companyName" value="${esc(f.companyName)}" placeholder="e.g. MIS Work India Pvt Ltd"></div>
+      <div class="field"><label>In Time (Office Start)</label><input type="time" data-set-field="inTime" value="${esc(f.inTime)}"></div>
+      <div class="field"><label>Out Time (Office End)</label><input type="time" data-set-field="outTime" value="${esc(f.outTime)}"></div>
+      <div class="field"><label>Allow Late Time (minutes grace period)</label><input type="number" min="0" data-set-field="allowLate" value="${esc(f.allowLate)}" placeholder="e.g. 10"></div>
+      <div class="punch-hint" style="margin-bottom:14px;">Employees punching in within the grace period after In Time will still be marked "On Time" instead of Late.</div>
+      <button class="btn btn-primary" data-action="save-settings" ${S.admin.settingsSaving ? 'disabled' : ''}>${S.admin.settingsSaving ? '<span class="spinner spinner-sm"></span> Saving…' : 'Save Settings'}</button>
+    </div>`;
+}
+
+async function submitSettings() {
+  const f = S.admin.settingsForm; if (!f) return;
+  if (!String(f.companyName || '').trim()) { S.admin.settingsError = 'Company Name is required.'; render(); return; }
+  if (!f.inTime || !f.outTime) { S.admin.settingsError = 'In Time and Out Time are required.'; render(); return; }
+  S.admin.settingsSaving = true; S.admin.settingsError = ''; render();
+  try {
+    const res = await runServer('saveAppSettings', f);
+    S.admin.settingsSaving = false;
+    if (res.status !== 'ok') { S.admin.settingsError = res.message || 'Save failed.'; render(); return; }
+    S.settings = res.settings;
+    showToast('Settings saved successfully.', false);
+    render();
+  } catch (err) {
+    S.admin.settingsSaving = false; S.admin.settingsError = err.message; render();
   }
 }
 </script>
