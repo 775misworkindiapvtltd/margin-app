@@ -50,16 +50,71 @@ var CONFIG = {
 };
 
 function doGet(e) {
-  ensureSheets_(); // auto-create Employees / Attendance tabs + sample rows if missing
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
-    .setTitle('Smart Attendance Management System')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  try {
+    ensureSheets_(); // auto-create Employees / Attendance / Settings tabs + sample rows if missing
+    return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('Smart Attendance Management System')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  } catch (err) {
+    // If ANYTHING fails before the HTML is returned (missing/misnamed file,
+    // sheet permission issue, etc.) show a clear diagnostic page instead of
+    // a blank white screen or Apps Script's generic error page.
+    return HtmlService.createHtmlOutput(buildBootErrorPage_(err));
+  }
 }
 
+/**
+ * Loads an HTML file's content for <?!= include('X') ?>. If the file is
+ * missing or misnamed (the #1 cause of a totally blank web app page), this
+ * throws a clear error that doGet()'s catch block turns into a diagnostic
+ * page — instead of Apps Script failing silently/blank.
+ */
 function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  try {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  } catch (err) {
+    throw new Error(
+      'Could not load the "' + filename + '" HTML file. ' +
+      'In the Apps Script editor, check that a file named exactly "' + filename + '" ' +
+      '(Apps Script auto-adds .html — do NOT type ".html" yourself when naming it, ' +
+      'otherwise it becomes "' + filename + '.html.html" and cannot be found) exists ' +
+      'and is not empty. Original error: ' + err.message
+    );
+  }
+}
+
+/** Builds a plain, dependency-free HTML error page (no include() calls) so it can never itself fail to render. */
+function buildBootErrorPage_(err) {
+  var msg = String(err && err.message || err || 'Unknown error');
+  var safe = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>Attendance App — Setup Issue</title>' +
+    '<style>' +
+    'body{font-family:system-ui,-apple-system,Arial,sans-serif;background:#0F172A;color:#111827;margin:0;' +
+    'min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}' +
+    '.box{background:#fff;max-width:560px;border-radius:16px;padding:28px 26px;box-shadow:0 24px 60px -12px rgba(0,0,0,.4);}' +
+    'h1{font-size:18px;margin:0 0 12px;color:#B91C1C;}' +
+    'p{font-size:13.5px;line-height:1.6;margin:0 0 12px;color:#374151;}' +
+    '.err{background:#FEF2F2;color:#B91C1C;border-radius:10px;padding:12px 14px;font-size:12.5px;' +
+    'font-family:monospace;white-space:pre-wrap;word-break:break-word;margin-bottom:14px;}' +
+    'ol{font-size:12.5px;color:#374151;line-height:1.8;padding-left:20px;}' +
+    'code{background:#F1F5F9;padding:2px 5px;border-radius:4px;}' +
+    '</style></head><body>' +
+    '<div class="box">' +
+    '<h1>⚠️ The app could not start</h1>' +
+    '<p>The server hit an error before it could render the page. This is why you saw a blank page instead of the login screen.</p>' +
+    '<div class="err">' + safe + '</div>' +
+    '<p><b>Most common causes (check in this order):</b></p>' +
+    '<ol>' +
+    '<li>An HTML file is missing or misnamed. In the Apps Script editor, file names should be exactly: <code>Index</code>, <code>Style</code>, <code>AppScript</code> (Apps Script auto-adds ".html" — do not type it yourself).</li>' +
+    '<li>This script is not bound to a Google Sheet (Employees/Attendance/Settings tabs need a spreadsheet). Open it via <b>your Sheet → Extensions → Apps Script</b>, not via script.google.com directly.</li>' +
+    '<li>The deployment is running an old/cached version. Go to <b>Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy</b>, then reload this URL.</li>' +
+    '</ol>' +
+    '<p style="margin-top:14px;"><button onclick="location.reload()" style="background:#2563EB;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;">Reload Page</button></p>' +
+    '</div></body></html>';
 }
 
 /**
