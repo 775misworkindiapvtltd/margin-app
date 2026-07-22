@@ -1,0 +1,493 @@
+<script>
+/* ============================================================
+   Receivables Dashboard — Calculation Engine (shared logic)
+   NOTE: This exact logic was unit-tested with Node before being embedded here
+   (see engine.js + test.js in the PR). Do not hand-edit calculation logic
+   without re-running the tests, since date/currency parsing edge cases are
+   easy to break silently (2 real bugs were caught this way during dev).
+   ============================================================ */
+
+const MS_DAY = 24 * 60 * 60 * 1000;
+
+function normHeader(h) {
+  return String(h || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+const FIELD_ALIASES = {
+  timestamp:      ['TIMESTAMP'],
+  billDate:       ['BILL_DATE', 'BILLDATE'],
+  billRefNo:      ['BILL_REF_NO', 'BILLREFNO', 'BILL_REF_NUMBER'],
+  partyName:      ['PARTY_NAME', 'PARTYNAME', 'CUSTOMER', 'CUSTOMER_NAME'],
+  partyGroup:     ['PARTY_GROUP', 'PARTYGROUP'],
+  subGroup:       ['SUB_GROUP', 'SUBGROUP'],
+  mainGroup:      ['MAIN_GROUP', 'MAINGROUP'],
+  salesPerson:    ['SALES_PERSON', 'SALESPERSON'],
+  phone:          ['PHONE_NO', 'PHONENO', 'PHONE'],
+  paymentTerms:   ['PAYMENT_TERMS', 'PAYMENTTERMS'],
+  pendingAmount:  ['PENDING_AMOUNT', 'PENDINGAMOUNT'],
+  dueDate:        ['DUE_DATE', 'DUEDATE'],
+  overdueDaysRaw: ['OVERDUE_D', 'OVERDUE_DAYS', 'OVERDUEDAYS', 'OVERDUE_D_AYS']
+};
+
+function detectColumnMap(headers) {
+  const normed = headers.map(normHeader);
+  const map = {};
+  Object.keys(FIELD_ALIASES).forEach(function (field) {
+    const aliases = FIELD_ALIASES[field];
+    for (let i = 0; i < normed.length; i++) {
+      if (aliases.indexOf(normed[i]) !== -1) { map[field] = i; return; }
+    }
+    // fallback: contains match
+    for (let i = 0; i < normed.length; i++) {
+      for (let a = 0; a < aliases.length; a++) {
+        if (normed[i].indexOf(aliases[a]) !== -1 || aliases[a].indexOf(normed[i]) !== -1) { map[field] = i; return; }
+      }
+    }
+  });
+  return map;
+}
+
+const EMPTY_TOKENS = ['', 'NULL', '-', 'NA', 'N/A', '#N/A', 'UNDEFINED'];
+function isEmptyToken(v) {
+  if (v === null || v === undefined) return true;
+  const s = String(v).trim().toUpperCase();
+  return EMPTY_TOKENS.indexOf(s) !== -1;
+}
+
+function parseCurrency(v) {
+  if (isEmptyToken(v)) return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/[₹,\s]/g, '').replace(/^\((.*)\)$/, '-$1');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+const MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+
+function parseFlexibleDate(v) {
+  if (isEmptyToken(v)) return null;
+  if (v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  const s = String(v).trim();
+  // D-MMM-YY or D-MMM-YYYY   e.g. 25-Jun-26 / 25-Jun-2026
+  let m = s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{2,4})/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const mon = MONTHS[m[2].slice(0, 3).toUpperCase()];
+    let yr = parseInt(m[3], 10);
+    if (mon === undefined) return null;
+    if (yr < 100) yr += 2000;
+    return new Date(yr, mon, day);
+  }
+  // DD/MM/YYYY or DD-MM-YYYY
+  m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+  if (m) {
+    const day = parseInt(m[1], 10), mon = parseInt(m[2], 10) - 1;
+    let yr = parseInt(m[3], 10); if (yr < 100) yr += 2000;
+    return new Date(yr, mon, day);
+  }
+  // YYYY-MM-DD
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+  const t = Date.parse(s);
+  return isNaN(t) ? null : startOfDay(new Date(t));
+}
+
+/* Parses TIMESTAMP values which come as DD/MM/YYYY HH:mm:ss (Apps Script sheet default)
+   or as native Date objects (when read directly via SpreadsheetApp). Falls back to
+   generic Date parsing for other formats (e.g. dd-MMM-yyyy). */
+function parseTimestampMs(v) {
+  if (isEmptyToken(v)) return 0;
+  if (v instanceof Date) return v.getTime();
+  const s = String(v).trim();
+  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const day = parseInt(m[1], 10), mon = parseInt(m[2], 10) - 1, yr = parseInt(m[3], 10);
+    const hh = parseInt(m[4] || '0', 10), mm = parseInt(m[5] || '0', 10), ss = parseInt(m[6] || '0', 10);
+    return new Date(yr, mon, day, hh, mm, ss).getTime();
+  }
+  m = s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,})[-\/\s](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    const day = parseInt(m[1], 10), mon = MONTHS[m[2].slice(0, 3).toUpperCase()];
+    let yr = parseInt(m[3], 10); if (yr < 100) yr += 2000;
+    if (mon === undefined) return 0;
+    const hh = parseInt(m[4] || '0', 10), mm = parseInt(m[5] || '0', 10), ss = parseInt(m[6] || '0', 10);
+    return new Date(yr, mon, day, hh, mm, ss).getTime();
+  }
+  const t = Date.parse(s);
+  return isNaN(t) ? 0 : t;
+}
+
+function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function daysBetween(a, b) { return Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / MS_DAY); }
+function normalizeName(s) { return String(s || '').trim().toUpperCase().replace(/\s+/g, ' '); }
+function sameDay(a, b) { return a && b && a.getTime() === b.getTime(); }
+
+/* Cleans a text field: treats Null/blank/-/NA/N/A tokens as empty string. */
+function cleanText(v) { return isEmptyToken(v) ? '' : String(v).trim(); }
+
+/* --------- Build clean dataset from raw sheet rows --------- */
+function buildRows(headers, rawRows) {
+  const map = detectColumnMap(headers);
+  const out = [];
+  rawRows.forEach(function (row) {
+    const get = function (field) { return map[field] !== undefined ? row[map[field]] : ''; };
+    const partyName = cleanText(get('partyName'));
+    if (!partyName) return;
+    const partyGroup = cleanText(get('partyGroup'));
+    const pendingAmount = parseCurrency(get('pendingAmount'));
+    const billDate = parseFlexibleDate(get('billDate'));
+    const dueDate = parseFlexibleDate(get('dueDate'));
+    const timestamp = get('timestamp');
+    out.push({
+      timestampRaw: timestamp,
+      timestampMs: parseTimestampMs(timestamp),
+      billDate: billDate,
+      billRefNo: cleanText(get('billRefNo')),
+      partyName: partyName,
+      partyGroup: partyGroup,
+      subGroup: cleanText(get('subGroup')),
+      mainGroup: cleanText(get('mainGroup')),
+      salesPerson: cleanText(get('salesPerson')),
+      phone: cleanText(get('phone')),
+      paymentTerms: cleanText(get('paymentTerms')),
+      pendingAmount: pendingAmount,
+      dueDate: dueDate,
+      overdueDaysRaw: get('overdueDaysRaw')
+    });
+  });
+  return out;
+}
+
+/* --------- Dedup: normalized party + billRefNo + billDate, keep latest timestamp --------- */
+function dedupe(rows) {
+  const byKey = new Map();
+  rows.forEach(function (r) {
+    const key = normalizeName(r.partyName) + '|' + r.billRefNo + '|' + (r.billDate ? r.billDate.getTime() : '');
+    const existing = byKey.get(key);
+    if (!existing || r.timestampMs >= existing.timestampMs) byKey.set(key, r);
+  });
+  return Array.from(byKey.values());
+}
+
+/* --------- Base data rule filter --------- */
+function qualifiedRows(rows, asOnDate) {
+  return rows.filter(function (r) {
+    if (normalizeName(r.partyGroup) !== 'DEBTORS') return false;
+    if (!(r.pendingAmount > 0)) return false;
+    if (!r.partyName) return false;
+    if (r.billDate && r.billDate.getTime() > asOnDate.getTime()) return false;
+    return true;
+  });
+}
+
+function computeOverdueDays(r, asOnDate) {
+  if (!r.dueDate) return 0;
+  if (r.dueDate.getTime() < asOnDate.getTime()) return daysBetween(asOnDate, r.dueDate);
+  return 0;
+}
+
+function ageingBucket(overdueDays, dueDate, asOnDate) {
+  if (dueDate && dueDate.getTime() >= asOnDate.getTime()) return 'Not Due';
+  if (overdueDays >= 1 && overdueDays <= 30) return '0-30';
+  if (overdueDays >= 31 && overdueDays <= 60) return '31-60';
+  if (overdueDays >= 61 && overdueDays <= 90) return '61-90';
+  if (overdueDays > 90) return '90+';
+  return 'Not Due';
+}
+
+function computeKPIs(rows, asOnDate) {
+  const q = qualifiedRows(rows, asOnDate);
+  const totalReceivable = q.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  const uniqCustomers = new Set(q.map(function (r) { return normalizeName(r.partyName); }));
+  const dueTodayRows = q.filter(function (r) { return r.dueDate && sameDay(r.dueDate, asOnDate); });
+  const dueToday = dueTodayRows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  const next7End = new Date(asOnDate.getTime() + 7 * MS_DAY);
+  const due7Rows = q.filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOnDate.getTime() && r.dueDate.getTime() <= next7End.getTime(); });
+  const due7 = due7Rows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  const overdueRows = q.filter(function (r) { return r.dueDate && r.dueDate.getTime() < asOnDate.getTime(); });
+  const overdueAmount = overdueRows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  const overdueCustomers = new Set(overdueRows.map(function (r) { return normalizeName(r.partyName); }));
+  let ageWeightedSum = 0, ageWeightSum = 0;
+  q.forEach(function (r) {
+    if (!r.billDate) return;
+    const age = daysBetween(asOnDate, r.billDate);
+    ageWeightedSum += r.pendingAmount * age;
+    ageWeightSum += r.pendingAmount;
+  });
+  const avgAge = ageWeightSum > 0 ? (ageWeightedSum / ageWeightSum) : 0;
+  return {
+    totalReceivable: totalReceivable, uniqCustomers: uniqCustomers.size, openInvoices: q.length,
+    dueToday: dueToday, dueTodayInvoices: dueTodayRows.length, dueTodayCustomers: new Set(dueTodayRows.map(function (r) { return normalizeName(r.partyName); })).size,
+    due7: due7, due7Invoices: due7Rows.length, due7Customers: new Set(due7Rows.map(function (r) { return normalizeName(r.partyName); })).size,
+    overdueAmount: overdueAmount, overdueInvoices: overdueRows.length, overdueCustomers: overdueCustomers.size,
+    avgAge: avgAge
+  };
+}
+
+function computeAgeing(rows, asOnDate) {
+  const q = qualifiedRows(rows, asOnDate);
+  const total = q.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  const buckets = { 'Not Due': [], '0-30': [], '31-60': [], '61-90': [], '90+': [] };
+  q.forEach(function (r) {
+    const od = computeOverdueDays(r, asOnDate);
+    const b = ageingBucket(od, r.dueDate, asOnDate);
+    buckets[b].push(Object.assign({}, r, { computedOverdueDays: od }));
+  });
+  const summary = Object.keys(buckets).map(function (name) {
+    const list = buckets[name];
+    const amt = list.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    const custs = new Set(list.map(function (r) { return normalizeName(r.partyName); }));
+    let wSum = 0;
+    list.forEach(function (r) { wSum += r.pendingAmount * r.computedOverdueDays; });
+    const wAvg = amt > 0 ? wSum / amt : 0;
+    return { bucket: name, amount: amt, invoices: list.length, customers: custs.size, pct: total > 0 ? (amt / total * 100) : 0, weightedAvgDays: wAvg, rows: list };
+  });
+  return { total: total, summary: summary };
+}
+
+function computeTopCustomers(rows, asOnDate, topN) {
+  const q = qualifiedRows(rows, asOnDate);
+  const byCustomer = new Map();
+  q.forEach(function (r) {
+    const key = normalizeName(r.partyName);
+    if (!byCustomer.has(key)) byCustomer.set(key, { name: r.partyName, rows: [], totalOutstanding: 0, overdueAmount: 0, notDueAmount: 0, salesPerson: r.salesPerson, phone: r.phone });
+    const c = byCustomer.get(key);
+    c.rows.push(r);
+    c.totalOutstanding += r.pendingAmount;
+    const od = computeOverdueDays(r, asOnDate);
+    if (od > 0) c.overdueAmount += r.pendingAmount; else c.notDueAmount += r.pendingAmount;
+    if (!c.salesPerson && r.salesPerson) c.salesPerson = r.salesPerson;
+    if (!c.phone && r.phone) c.phone = r.phone;
+  });
+  const list = Array.from(byCustomer.values()).map(function (c) {
+    const oldestBill = c.rows.reduce(function (m, r) { return (!m || (r.billDate && r.billDate < m)) ? r.billDate : m; }, null);
+    const oldestDue = c.rows.reduce(function (m, r) { return (!m || (r.dueDate && r.dueDate < m)) ? r.dueDate : m; }, null);
+    const maxOverdue = c.rows.reduce(function (m, r) { return Math.max(m, computeOverdueDays(r, asOnDate)); }, 0);
+    return {
+      name: c.name, totalOutstanding: c.totalOutstanding, overdueAmount: c.overdueAmount, notDueAmount: c.notDueAmount,
+      invoiceCount: c.rows.length, oldestBillDate: oldestBill, oldestDueDate: oldestDue, maxOverdueDays: maxOverdue,
+      salesPerson: c.salesPerson || 'Unassigned', phone: c.phone
+    };
+  }).sort(function (a, b) { return b.totalOutstanding - a.totalOutstanding; });
+  return topN ? list.slice(0, topN) : list;
+}
+
+/* --------- Full customer outstanding list (all customers, not just top N) --------- */
+function computeCustomerList(rows, asOnDate) {
+  var list = computeTopCustomers(rows, asOnDate, null);
+  return list.map(function (c) {
+    var status = 'Current';
+    if (c.maxOverdueDays > 90) status = 'Critical';
+    else if (c.maxOverdueDays >= 61) status = 'High Risk';
+    else if (c.maxOverdueDays >= 31) status = 'Overdue';
+    else if (c.maxOverdueDays >= 1) status = 'Due';
+    return Object.assign({}, c, { status: status });
+  });
+}
+
+/* --------- Sales person grouping --------- */
+function computeSalesPersonGrouping(rows, asOnDate, receiptsByCustomer, mtdStart) {
+  var q = qualifiedRows(rows, asOnDate);
+  const byPerson = new Map();
+  q.forEach(function (r) {
+    const key = r.salesPerson ? normalizeName(r.salesPerson) : 'UNASSIGNED';
+    const label = r.salesPerson ? r.salesPerson : 'Unassigned';
+    if (!byPerson.has(key)) byPerson.set(key, { label: label, rows: [], customers: new Set() });
+    const p = byPerson.get(key);
+    p.rows.push(r);
+    p.customers.add(normalizeName(r.partyName));
+  });
+  const next7 = new Date(asOnDate.getTime() + 7 * MS_DAY);
+  const result = [];
+  byPerson.forEach(function (p) {
+    const totalOutstanding = p.rows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    const overdueAmount = p.rows.filter(function (r) { return computeOverdueDays(r, asOnDate) > 0; }).reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    const over90 = p.rows.filter(function (r) { return computeOverdueDays(r, asOnDate) > 90; }).reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    const due7 = p.rows.filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOnDate.getTime() && r.dueDate.getTime() <= next7.getTime(); }).reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    let collectionMTD = 0;
+    if (receiptsByCustomer) {
+      p.customers.forEach(function (custKey) {
+        const list = receiptsByCustomer.get(custKey) || [];
+        list.forEach(function (rc) {
+          if (rc.receiptDate && rc.receiptDate.getTime() >= mtdStart.getTime() && rc.receiptDate.getTime() <= asOnDate.getTime()) collectionMTD += rc.amount;
+        });
+      });
+    }
+    const efficiency = (collectionMTD + totalOutstanding) > 0 ? (collectionMTD / (collectionMTD + totalOutstanding) * 100) : 0;
+    result.push({
+      salesPerson: p.label, totalOutstanding: totalOutstanding, overdueAmount: overdueAmount, over90Amount: over90,
+      due7: due7, customerCount: p.customers.size, collectionMTD: collectionMTD, efficiency: efficiency
+    });
+  });
+  return result.sort(function (a, b) { return b.totalOutstanding - a.totalOutstanding; });
+}
+
+/* --------- Upcoming collections table --------- */
+function upcomingStatus(daysLeft) {
+  if (daysLeft === 0) return 'Due Today';
+  if (daysLeft === 1) return 'Due Tomorrow';
+  if (daysLeft >= 2 && daysLeft <= 7) return 'Due This Week';
+  if (daysLeft >= 8 && daysLeft <= 15) return 'Due in 15 Days';
+  if (daysLeft >= 16 && daysLeft <= 30) return 'Due in 30 Days';
+  return 'Future';
+}
+function computeUpcomingCollections(rows, asOnDate) {
+  const q = qualifiedRows(rows, asOnDate).filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOnDate.getTime(); });
+  q.sort(function (a, b) {
+    if (a.dueDate.getTime() !== b.dueDate.getTime()) return a.dueDate.getTime() - b.dueDate.getTime();
+    return b.pendingAmount - a.pendingAmount;
+  });
+  return q.map(function (r) {
+    const daysLeft = daysBetween(r.dueDate, asOnDate);
+    return Object.assign({}, r, { daysLeft: daysLeft, status: upcomingStatus(daysLeft) });
+  });
+}
+
+/* --------- Cash inflow forecast --------- */
+function computeCashForecast(rows, asOnDate) {
+  const q = qualifiedRows(rows, asOnDate).filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOnDate.getTime(); });
+  const buckets = { today: 0, tomorrow: 0, next7: 0, next15: 0, next30: 0 };
+  const tomorrow = new Date(asOnDate.getTime() + MS_DAY);
+  const d7 = new Date(asOnDate.getTime() + 7 * MS_DAY);
+  const d15 = new Date(asOnDate.getTime() + 15 * MS_DAY);
+  const d30 = new Date(asOnDate.getTime() + 30 * MS_DAY);
+  q.forEach(function (r) {
+    const t = r.dueDate.getTime();
+    if (sameDay(r.dueDate, asOnDate)) buckets.today += r.pendingAmount;
+    if (sameDay(r.dueDate, tomorrow)) buckets.tomorrow += r.pendingAmount;
+    if (t <= d7.getTime()) buckets.next7 += r.pendingAmount;
+    if (t <= d15.getTime()) buckets.next15 += r.pendingAmount;
+    if (t <= d30.getTime()) buckets.next30 += r.pendingAmount;
+  });
+  return buckets;
+}
+
+/* --------- Receipts: column detection + parsing --------- */
+const RECEIPT_FIELD_ALIASES = {
+  timestamp:    ['TIMESTAMP'],
+  receiptDate:  ['RECEIPT_DATE', 'RECEIPTDATE', 'DATE'],
+  receiptNo:    ['RECEIPT_NO', 'RECEIPTNO', 'RECEIPT_NUMBER'],
+  partyName:    ['PARTY_NAME', 'PARTYNAME', 'CUSTOMER', 'CUSTOMER_NAME'],
+  amount:       ['AMOUNT', 'RECEIPT_AMOUNT'],
+  mode:         ['MODE', 'PAYMENT_MODE'],
+  reference:    ['REFERENCE', 'REF_NO', 'REFNO'],
+  salesPerson:  ['SALES_PERSON', 'SALESPERSON']
+};
+function detectReceiptColumnMap(headers) {
+  const normed = headers.map(normHeader);
+  const map = {};
+  Object.keys(RECEIPT_FIELD_ALIASES).forEach(function (field) {
+    const aliases = RECEIPT_FIELD_ALIASES[field];
+    for (let i = 0; i < normed.length; i++) { if (aliases.indexOf(normed[i]) !== -1) { map[field] = i; return; } }
+    for (let i = 0; i < normed.length; i++) {
+      for (let a = 0; a < aliases.length; a++) {
+        if (normed[i].indexOf(aliases[a]) !== -1) { map[field] = i; return; }
+      }
+    }
+  });
+  return map;
+}
+function buildReceiptRows(headers, rawRows) {
+  const map = detectReceiptColumnMap(headers);
+  const out = [];
+  rawRows.forEach(function (row) {
+    const get = function (f) { return map[f] !== undefined ? row[map[f]] : ''; };
+    const partyName = cleanText(get('partyName'));
+    const amount = parseCurrency(get('amount'));
+    if (!partyName || !(amount > 0)) return;
+    out.push({
+      timestampMs: parseTimestampMs(get('timestamp')),
+      receiptDate: parseFlexibleDate(get('receiptDate')),
+      receiptNo: cleanText(get('receiptNo')),
+      partyName: partyName,
+      amount: amount,
+      mode: cleanText(get('mode')),
+      reference: cleanText(get('reference')),
+      salesPerson: cleanText(get('salesPerson'))
+    });
+  });
+  return out;
+}
+function groupReceiptsByCustomer(receipts) {
+  const map = new Map();
+  receipts.forEach(function (r) {
+    const key = normalizeName(r.partyName);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  });
+  return map;
+}
+
+/* --------- Collection trend (daily/weekly/monthly) --------- */
+function periodKey(date, granularity) {
+  if (granularity === 'daily') return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+  if (granularity === 'weekly') {
+    const d = new Date(date); const day = d.getDay(); d.setDate(d.getDate() - day);
+    return d.getFullYear() + '-W' + Math.ceil((d.getDate()) / 7) + '-' + (d.getMonth() + 1);
+  }
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+}
+function computeCollectionTrend(receipts, granularity, periodStart, periodEnd) {
+  const inRange = receipts.filter(function (r) { return r.receiptDate && r.receiptDate.getTime() >= periodStart.getTime() && r.receiptDate.getTime() <= periodEnd.getTime(); });
+  const byKey = new Map();
+  inRange.forEach(function (r) {
+    const k = periodKey(r.receiptDate, granularity);
+    byKey.set(k, (byKey.get(k) || 0) + r.amount);
+  });
+  return Array.from(byKey.entries()).sort(function (a, b) { return a[0] < b[0] ? -1 : 1; }).map(function (e) { return { period: e[0], amount: e[1] }; });
+}
+
+/* --------- Recent collections (sorted latest first) --------- */
+function computeRecentCollections(receipts, limit) {
+  const sorted = receipts.slice().sort(function (a, b) {
+    const ad = a.receiptDate ? a.receiptDate.getTime() : 0, bd = b.receiptDate ? b.receiptDate.getTime() : 0;
+    if (ad !== bd) return bd - ad;
+    return b.timestampMs - a.timestampMs;
+  });
+  return limit ? sorted.slice(0, limit) : sorted;
+}
+
+/* --------- Collection efficiency: Receipts in period / (Receipts + Current Outstanding) --------- */
+function computeCollectionEfficiency(receiptsInPeriod, currentOutstanding) {
+  const collected = receiptsInPeriod.reduce(function (s, r) { return s + r.amount; }, 0);
+  const denom = collected + currentOutstanding;
+  return denom > 0 ? (collected / denom * 100) : 0;
+}
+
+/* --------- Rule-based insights ---------
+   collectionDeltaPct: optional number, % change vs previous period (null/undefined if unavailable)
+   noReceiptCustomers60d: optional array of customer names with no receipt in the last 60 days
+   creditLimitBreaches: optional array of { name, outstanding, limit } */
+function computeInsights(rows, asOnDate, kpis, ageing, topCustomers, collectionDeltaPct, noReceiptCustomers60d, creditLimitBreaches) {
+  const insights = [];
+  const top5 = topCustomers.slice(0, 5);
+  const top5Sum = top5.reduce(function (s, c) { return s + c.totalOutstanding; }, 0);
+  if (kpis.totalReceivable > 0 && top5.length) {
+    insights.push({ type: 'info', text: 'Top 5 customers contribute ' + (top5Sum / kpis.totalReceivable * 100).toFixed(1) + '% of total receivables.' });
+  }
+  const b90 = ageing.summary.find(function (b) { return b.bucket === '90+'; });
+  if (b90 && b90.amount > 0) insights.push({ type: 'critical', text: fmtINR(b90.amount) + ' is overdue above 90 days across ' + b90.invoices + ' invoice(s).' });
+  const q = qualifiedRows(rows, asOnDate);
+  const next7 = new Date(asOnDate.getTime() + 7 * MS_DAY);
+  const dueThisWeek = q.filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOnDate.getTime() && r.dueDate.getTime() <= next7.getTime(); });
+  if (dueThisWeek.length) insights.push({ type: 'warning', text: dueThisWeek.length + ' invoice(s) are due this week.' });
+  const unassigned = q.filter(function (r) { return !r.salesPerson; });
+  if (unassigned.length) {
+    const amt = unassigned.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+    insights.push({ type: 'warning', text: unassigned.length + ' receivable row(s) (' + fmtINR(amt) + ') have no assigned sales person.' });
+  }
+  if (creditLimitBreaches && creditLimitBreaches.length) {
+    creditLimitBreaches.forEach(function (c) {
+      insights.push({ type: 'critical', text: c.name + ' has crossed its credit limit (' + fmtINR(c.outstanding) + ' outstanding vs limit ' + fmtINR(c.limit) + ').' });
+    });
+  }
+  if (noReceiptCustomers60d && noReceiptCustomers60d.length) {
+    insights.push({ type: 'warning', text: 'No receipt received from ' + noReceiptCustomers60d.length + ' customer(s) in the last 60 days.' });
+  }
+  if (typeof collectionDeltaPct === 'number') {
+    if (collectionDeltaPct > 0) insights.push({ type: 'positive', text: 'Collections increased by ' + collectionDeltaPct.toFixed(1) + '% compared to the previous period.' });
+    else if (collectionDeltaPct < 0) insights.push({ type: 'warning', text: 'Collections decreased by ' + Math.abs(collectionDeltaPct).toFixed(1) + '% compared to the previous period.' });
+  }
+  return insights;
+}
+</script>

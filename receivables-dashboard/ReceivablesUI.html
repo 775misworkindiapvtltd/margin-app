@@ -1,0 +1,938 @@
+<script>
+/* ==============================================================================
+   RECEIVABLES DASHBOARD — UI / STATE / RENDER
+   Uses the calculation engine defined in ReceivablesEngine.html (loaded first).
+   ============================================================================== */
+
+/* ---------------- Currency / date formatting ---------------- */
+function fmtINR(num) {
+  if (num === null || num === undefined || isNaN(num)) return '\u20B90';
+  var isNeg = num < 0; num = Math.round(Math.abs(num));
+  var str = String(num);
+  var lastThree = str.substring(str.length - 3);
+  var other = str.substring(0, str.length - 3);
+  if (other !== '') lastThree = ',' + lastThree;
+  var res = other.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + lastThree;
+  return (isNeg ? '-' : '') + '\u20B9' + res;
+}
+function fmtINRShort(num) {
+  if (!num) return '\u20B90';
+  var abs = Math.abs(num);
+  if (abs >= 10000000) return (num / 10000000).toFixed(1) + 'Cr';
+  if (abs >= 100000) return (num / 100000).toFixed(1) + 'L';
+  if (abs >= 1000) return (num / 1000).toFixed(1) + 'K';
+  return fmtINR(num);
+}
+var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtDateDisp(d) { if (!d) return '--'; return d.getDate() + '-' + MONTH_NAMES[d.getMonth()] + '-' + d.getFullYear(); }
+function fmtDateISO(d) { if (!d) return ''; return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+function initials(name) { name = String(name || '?').trim(); var parts = name.split(/\s+/); return ((parts[0] || '')[0] || '') .concat((parts[1] || '')[0] || '').toUpperCase() || name.slice(0, 2).toUpperCase(); }
+
+/* ---------------- State ---------------- */
+var RD = {};
+RD.state = {
+  ready: false, error: '', syncing: false,
+  rawReceivables: null, rawReceipts: null, balanceAvailable: false, generatedAt: null,
+  rows: [],          // deduped, cleaned receivable rows (all — not yet base-filtered)
+  receipts: [],       // cleaned receipt rows
+  receiptsByCustomer: new Map(),
+  asOnDate: RD_startOfDay(new Date()),
+  period: 'MTD',      // Today | 7D | 15D | 30D | MTD | QTD | YTD | Custom
+  customFrom: null, customTo: null,
+  compare: false,
+  trendGranularity: 'monthly',
+  filters: { company: 'All', branch: 'All', salesPerson: 'All', customerGroup: 'All', customer: 'All', search: '' },
+  modal: null,        // { name, tab }
+  followups: {},      // localStorage-backed { customerNameKey: [ {text, date} ] }
+  toast: null,
+  sidebarOpen: false,
+  ageBucketFocus: null, // when set, Top Outstanding / detail view can filter by bucket
+  charts: {}
+};
+
+function RD_startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function RD_addDays(d, n) { return new Date(d.getTime() + n * 86400000); }
+
+try {
+  var fu = localStorage.getItem('rd_followups');
+  if (fu) RD.state.followups = JSON.parse(fu);
+} catch (e) {}
+function RD_saveFollowups() { try { localStorage.setItem('rd_followups', JSON.stringify(RD.state.followups)); } catch (e) {} }
+
+/* ---------------- Financial-year-aware period math (India: 1 Apr - 31 Mar) ---------------- */
+function RD_fyStart(d) { var y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return new Date(y, 3, 1); }
+function RD_quarterStart(d) {
+  var m = d.getMonth(); // FY quarters: Apr-Jun, Jul-Sep, Oct-Dec, Jan-Mar
+  var qStartMonth = m >= 3 ? (3 + Math.floor((m - 3) / 3) * 3) : (0 + Math.floor(m / 3) * 3);
+  var y = d.getFullYear();
+  return new Date(y, qStartMonth, 1);
+}
+function RD_monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+
+function RD_periodRange() {
+  var asOn = RD.state.asOnDate;
+  switch (RD.state.period) {
+    case 'Today': return [asOn, asOn];
+    case '7D': return [RD_addDays(asOn, -6), asOn];
+    case '15D': return [RD_addDays(asOn, -14), asOn];
+    case '30D': return [RD_addDays(asOn, -29), asOn];
+    case 'MTD': return [RD_monthStart(asOn), asOn];
+    case 'QTD': return [RD_quarterStart(asOn), asOn];
+    case 'YTD': return [RD_fyStart(asOn), asOn];
+    case 'Custom': return [RD.state.customFrom || asOn, RD.state.customTo || asOn];
+    default: return [RD_monthStart(asOn), asOn];
+  }
+}
+function RD_previousPeriodRange() {
+  var r = RD_periodRange();
+  var days = Math.round((r[1].getTime() - r[0].getTime()) / 86400000) + 1;
+  var prevTo = RD_addDays(r[0], -1);
+  var prevFrom = RD_addDays(prevTo, -(days - 1));
+  return [prevFrom, prevTo];
+}
+
+/* ---------------- Bootstrap / data loading ---------------- */
+function RD_runServer(fnName, arg) {
+  return new Promise(function (resolve, reject) {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error('google.script.run not available — open this page via the Apps Script /exec URL.'));
+      return;
+    }
+    var call = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (err) { reject(new Error(err.message || String(err))); });
+    arg === undefined ? call[fnName]() : call[fnName](arg);
+  });
+}
+
+function RD_loadAll() {
+  RD.state.ready = false; RD.state.error = ''; RD_render();
+  RD_runServer('getReceivablesBootstrap').then(function (data) {
+    RD.state.rawReceivables = data.receivables;
+    RD.state.rawReceipts = data.receipt;
+    RD.state.balanceAvailable = !!data.balanceAvailable;
+    RD.state.generatedAt = data.generatedAt ? new Date(data.generatedAt) : new Date();
+
+    if (!data.receivables || !data.receivables.found || !data.receivables.headers.length) {
+      RD.state.error = 'Could not find a Receivables sheet. A tab with headers like Party_Name, Pending Amount and Due_Date is required (any tab name works — headers are auto-detected).';
+      RD.state.ready = true; RD_render(); return;
+    }
+
+    var built = buildRows(data.receivables.headers, data.receivables.rows);
+    RD.state.rows = dedupe(built);
+
+    if (data.receipt && data.receipt.found && data.receipt.headers.length) {
+      RD.state.receipts = buildReceiptRows(data.receipt.headers, data.receipt.rows);
+      RD.state.receiptsByCustomer = groupReceiptsByCustomer(RD.state.receipts);
+    } else {
+      RD.state.receipts = []; RD.state.receiptsByCustomer = new Map();
+    }
+
+    // Default As-On-Date = latest bill date present (falls back to server "today")
+    RD.state.asOnDate = RD_startOfDay(new Date());
+    RD.state.ready = true;
+    RD_render();
+  }).catch(function (err) {
+    RD.state.error = err.message; RD.state.ready = true; RD_render();
+  });
+}
+
+function RD_refresh() {
+  RD.state.syncing = true; RD_render();
+  RD_runServer('getReceivablesBootstrap').then(function (data) {
+    RD.state.rawReceivables = data.receivables; RD.state.rawReceipts = data.receipt;
+    RD.state.generatedAt = data.generatedAt ? new Date(data.generatedAt) : new Date();
+    if (data.receivables && data.receivables.found) {
+      RD.state.rows = dedupe(buildRows(data.receivables.headers, data.receivables.rows));
+    }
+    if (data.receipt && data.receipt.found) {
+      RD.state.receipts = buildReceiptRows(data.receipt.headers, data.receipt.rows);
+      RD.state.receiptsByCustomer = groupReceiptsByCustomer(RD.state.receipts);
+    }
+    RD.state.syncing = false; RD_toast('Synced with sheet.', false); RD_render();
+  }).catch(function (err) { RD.state.syncing = false; RD_toast('Sync failed: ' + err.message, true); RD_render(); });
+}
+
+function RD_toast(msg, isErr) {
+  RD.state.toast = { msg: msg, isErr: isErr };
+  RD_render();
+  setTimeout(function () { RD.state.toast = null; var t = document.querySelector('.rd-toast'); if (t) t.remove(); }, 3000);
+}
+
+/* ---------------- Derived / filtered data ---------------- */
+function RD_uniqueValues(field) {
+  var set = new Set();
+  RD.state.rows.forEach(function (r) { if (r[field]) set.add(r[field]); });
+  return Array.from(set).sort();
+}
+
+function RD_visibleRows() {
+  var f = RD.state.filters;
+  return RD.state.rows.filter(function (r) {
+    if (f.salesPerson !== 'All') {
+      var sp = r.salesPerson || 'Unassigned';
+      if (sp !== f.salesPerson) return false;
+    }
+    if (f.customerGroup !== 'All' && r.subGroup !== f.customerGroup) return false;
+    if (f.customer !== 'All' && normalizeName(r.partyName) !== normalizeName(f.customer)) return false;
+    if (f.search) {
+      var s = f.search.toLowerCase();
+      var hay = (r.partyName + ' ' + r.billRefNo).toLowerCase();
+      if (hay.indexOf(s) === -1) return false;
+    }
+    return true;
+  });
+}
+
+function RD_computeAll() {
+  var rows = RD_visibleRows();
+  var asOn = RD.state.asOnDate;
+  var kpis = computeKPIs(rows, asOn);
+  var ageing = computeAgeing(rows, asOn);
+  var topCustomers = computeTopCustomers(rows, asOn, 10);
+  var customerList = computeCustomerList(rows, asOn);
+  var mtdStart = RD_monthStart(asOn);
+  var spGroups = computeSalesPersonGrouping(rows, asOn, RD.state.receiptsByCustomer, mtdStart);
+  var upcoming = computeUpcomingCollections(rows, asOn);
+  var forecast = computeCashForecast(rows, asOn);
+
+  var pr = RD_periodRange();
+  var receiptsInPeriod = RD.state.receipts.filter(function (r) { return r.receiptDate && r.receiptDate.getTime() >= pr[0].getTime() && r.receiptDate.getTime() <= pr[1].getTime(); });
+  var collectedInPeriod = receiptsInPeriod.reduce(function (s, r) { return s + r.amount; }, 0);
+  var collectedToday = RD.state.receipts.filter(function (r) { return r.receiptDate && sameDay(r.receiptDate, asOn); });
+  var collectedTodayAmt = collectedToday.reduce(function (s, r) { return s + r.amount; }, 0);
+  var custPaidToday = new Set(collectedToday.map(function (r) { return normalizeName(r.partyName); })).size;
+
+  var trend = computeCollectionTrend(RD.state.receipts, RD.state.trendGranularity, pr[0], pr[1]);
+  var prevRange = RD_previousPeriodRange();
+  var prevReceipts = RD.state.receipts.filter(function (r) { return r.receiptDate && r.receiptDate.getTime() >= prevRange[0].getTime() && r.receiptDate.getTime() <= prevRange[1].getTime(); });
+  var prevTrend = computeCollectionTrend(prevReceipts, RD.state.trendGranularity, prevRange[0], prevRange[1]);
+  var prevCollected = prevReceipts.reduce(function (s, r) { return s + r.amount; }, 0);
+  var collectionDeltaPct = prevCollected > 0 ? ((collectedInPeriod - prevCollected) / prevCollected * 100) : null;
+
+  var efficiency = computeCollectionEfficiency(receiptsInPeriod, kpis.totalReceivable);
+
+  var recentCollections = computeRecentCollections(RD.state.receipts, 8);
+
+  // customers with no receipt in the last 60 days (only considered among those with outstanding)
+  var sixtyAgo = RD_addDays(asOn, -60);
+  var noReceipt60 = topCustomers.filter(function (c) {
+    var key = normalizeName(c.name);
+    var list = RD.state.receiptsByCustomer.get(key) || [];
+    var recent = list.some(function (r) { return r.receiptDate && r.receiptDate.getTime() >= sixtyAgo.getTime(); });
+    return !recent;
+  }).map(function (c) { return c.name; });
+
+  var insights = computeInsights(rows, asOn, kpis, ageing, topCustomers, collectionDeltaPct, noReceipt60, []);
+
+  return {
+    rows: rows, kpis: kpis, ageing: ageing, topCustomers: topCustomers, customerList: customerList,
+    spGroups: spGroups, upcoming: upcoming, forecast: forecast, trend: trend, prevTrend: prevTrend,
+    collectedInPeriod: collectedInPeriod, collectedTodayAmt: collectedTodayAmt, custPaidToday: custPaidToday,
+    collectedTodayCount: collectedToday.length, efficiency: efficiency, collectionDeltaPct: collectionDeltaPct,
+    recentCollections: recentCollections, insights: insights, periodRange: pr
+  };
+}
+
+/* ---------------- Icons (inline SVG, no external deps) ---------------- */
+var ICO = {
+  dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>',
+  receivables: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg>',
+  ageing: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  customer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  upcoming: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+  overdue: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>',
+  receipts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16l4-2 4 2 4-2 4 2V8z"/></svg>',
+  cash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/></svg>',
+  insights: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  ledger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+  filter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>',
+  view: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  ledgerMini: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
+  whatsapp: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.149-.15.347-.372.52-.57.174-.198.232-.297.348-.495.116-.198.017-.372-.03-.52-.05-.148-.667-1.608-.914-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.372-.01-.571-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.017-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.05 3.126 4.976 4.263.716.309 1.28.494 1.716.632.723.23 1.379.198 1.898.12.579-.086 1.758-.719 2.006-1.413.248-.694.248-1.29.174-1.413-.075-.124-.272-.198-.57-.347z"/><path d="M12 2a10 10 0 0 0-8.5 15.3L2 22l4.85-1.47A10 10 0 1 0 12 2z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>'
+};
+
+/* ---------------- Sidebar / topbar / filter bar ---------------- */
+var NAV_GROUPS = [
+  { label: 'Overview', items: [{ key: 'dashboard', label: 'Dashboard', icon: 'dashboard' }] },
+  { label: 'Receivables', items: [
+      { key: 'dashboard', label: 'Receivables Dashboard', icon: 'receivables' },
+      { key: 'ageing', label: 'Ageing Summary', icon: 'ageing' },
+      { key: 'customers', label: 'Customer List', icon: 'customer' },
+      { key: 'upcoming', label: 'Upcoming Collections', icon: 'upcoming' },
+      { key: 'overdue', label: 'Overdue Customers', icon: 'overdue' },
+      { key: 'receipts', label: 'Receipt List', icon: 'receipts' },
+      { key: 'salesperson', label: 'Collection by Sales Person', icon: 'users' }
+  ]}
+];
+
+function RD_renderSidebar() {
+  var groups = NAV_GROUPS.map(function (g) {
+    var items = g.items.map(function (n) {
+      return '<div class="rd-nav-item' + (RD.state.view === n.key ? ' active' : '') + '" data-rd-action="nav" data-rd-view="' + n.key + '">' + ICO[n.icon] + '<span>' + esc(n.label) + '</span></div>';
+    }).join('');
+    return '<div class="rd-nav-group"><div class="rd-nav-group-label">' + esc(g.label) + '</div>' + items + '</div>';
+  }).join('');
+  return '' +
+    '<div class="rd-sidebar' + (RD.state.sidebarOpen ? ' open' : '') + '">' +
+      '<div class="rd-brand"><div class="rd-brand-icon">' + ICO.dashboard + '</div><div class="rd-brand-text"><h1>Finance 360\u00B0</h1><div class="sub">Command Center</div></div></div>' +
+      '<div class="rd-nav">' + groups + '</div>' +
+      '<div class="rd-sidebar-foot"><button class="rd-sync-btn" data-rd-action="refresh">' + ICO.sync + (RD.state.syncing ? 'Refreshing\u2026' : 'Sync with Sheet') + '</button></div>' +
+    '</div>';
+}
+
+function RD_periodBtns() {
+  var opts = [['Today', 'Today'], ['7D', '7 Days'], ['15D', '15 Days'], ['30D', '30 Days'], ['MTD', 'MTD'], ['QTD', 'QTD'], ['YTD', 'YTD']];
+  return opts.map(function (o) {
+    return '<button class="rd-period-btn' + (RD.state.period === o[0] ? ' active' : '') + '" data-rd-action="period" data-rd-period="' + o[0] + '">' + o[1] + '</button>';
+  }).join('') + '<button class="rd-period-btn' + (RD.state.period === 'Custom' ? ' active' : '') + '" data-rd-action="period" data-rd-period="Custom">Custom</button>';
+}
+
+function RD_selectOptions(current, list) {
+  return ['All'].concat(list).map(function (v) { return '<option value="' + esc(v) + '"' + (v === current ? ' selected' : '') + '>' + esc(v === 'All' ? 'All' : v) + '</option>'; }).join('');
+}
+
+function RD_renderFilterBar() {
+  var salesPeople = RD_uniqueValues('salesPerson').map(function (v) { return v; });
+  if (RD.state.rows.some(function (r) { return !r.salesPerson; })) salesPeople.push('Unassigned');
+  var groups = RD_uniqueValues('subGroup');
+  var customers = Array.from(new Set(RD.state.rows.map(function (r) { return r.partyName; }))).sort();
+  return '' +
+    '<div class="rd-filterbar">' +
+      '<div class="rd-filter-field"><label>Company</label><select disabled title="Single-company data source"><option>All Companies</option></select></div>' +
+      '<div class="rd-filter-field"><label>Branch</label><select disabled title="Single-branch data source"><option>All Branches</option></select></div>' +
+      '<div class="rd-filter-field"><label>Sales Person</label><select data-rd-action="filter" data-rd-filter="salesPerson">' + RD_selectOptions(RD.state.filters.salesPerson, salesPeople) + '</select></div>' +
+      '<div class="rd-filter-field"><label>Customer</label><select data-rd-action="filter" data-rd-filter="customer">' + RD_selectOptions(RD.state.filters.customer, customers) + '</select></div>' +
+      '<div class="rd-filter-field"><label>Customer Group</label><select data-rd-action="filter" data-rd-filter="customerGroup">' + RD_selectOptions(RD.state.filters.customerGroup, groups) + '</select></div>' +
+      '<div class="rd-filter-field"><label>As On Date</label><input type="text" id="rdAsOnDate" value="' + fmtDateDisp(RD.state.asOnDate) + '" readonly></div>' +
+      '<div class="rd-period-group">' + RD_periodBtns() + '</div>' +
+      '<label class="rd-compare-toggle"><input type="checkbox" data-rd-action="compare"' + (RD.state.compare ? ' checked' : '') + '> Compare Previous Period</label>' +
+      '<div class="rd-filter-field rd-search-field"><label>Search</label><input type="text" placeholder="Customer / Invoice No." data-rd-action="search" value="' + esc(RD.state.filters.search) + '"></div>' +
+      '<button class="rd-filters-btn" data-rd-action="reset-filters">' + ICO.filter + 'Reset</button>' +
+    '</div>';
+}
+
+function RD_renderTopbar() {
+  var updated = RD.state.generatedAt ? fmtDateDisp(RD.state.generatedAt) + ' ' + RD.state.generatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  return '' +
+    '<div class="rd-topbar">' +
+      '<div class="rd-topbar-row1">' +
+        '<div class="rd-title"><div style="display:flex;align-items:center;"><button class="rd-mobile-menu-btn" data-rd-action="toggle-sidebar">\u2630</button><h2>Receivables Dashboard</h2></div>' +
+          '<div class="rd-breadcrumb"><a href="#" data-rd-action="nav" data-rd-view="dashboard">Home</a> / Receivables / <b>Dashboard</b></div></div>' +
+        '<div class="rd-topbar-right">' +
+          '<div class="rd-sync-status"><span class="dot"></span>Tally Sync \u00B7 ' + esc(updated) + '</div>' +
+          '<button class="rd-icon-btn" title="Refresh" data-rd-action="refresh">' + ICO.sync + '</button>' +
+          '<button class="rd-icon-btn" title="Notifications">' + ICO.bell + '<span class="badge">' + Math.min(9, (RD.state.error ? 1 : 0)) + '</span></button>' +
+          '<div class="rd-avatar-block"><div class="rd-avatar">' + initials('Finance Manager') + '</div><div><div class="rd-avatar-name">Finance Manager</div><div class="rd-avatar-role">Receivables</div></div></div>' +
+        '</div>' +
+      '</div>' +
+      RD_renderFilterBar() +
+    '</div>';
+}
+
+/* ---------------- KPI Cards ---------------- */
+function RD_kpiCard(opts) {
+  return '' +
+    '<div class="rd-kpi-card" data-rd-action="kpi-drill" data-rd-kpi="' + opts.key + '">' +
+      '<div class="rd-kpi-top"><div class="rd-kpi-icon ' + opts.color + '">' + ICO[opts.icon] + '</div>' +
+      (opts.delta !== undefined && opts.delta !== null ? '<div class="rd-kpi-delta ' + (opts.delta >= 0 ? 'up' : 'down') + '">' + (opts.delta >= 0 ? '\u25B2' : '\u25BC') + ' ' + Math.abs(opts.delta).toFixed(1) + '%</div>' : '') +
+      '</div>' +
+      '<div class="rd-kpi-label">' + esc(opts.label) + '</div>' +
+      '<div class="rd-kpi-value">' + esc(opts.value) + '</div>' +
+      '<div class="rd-kpi-sub">' + esc(opts.sub || '') + '</div>' +
+    '</div>';
+}
+
+function RD_renderKpis(c) {
+  var k = c.kpis;
+  return '<div class="rd-kpi-row">' +
+    RD_kpiCard({ key: 'total', icon: 'receivables', color: 'blue', label: 'Total Receivable', value: fmtINR(k.totalReceivable), sub: k.uniqCustomers + ' Customers \u00B7 ' + k.openInvoices + ' Invoices' }) +
+    RD_kpiCard({ key: 'collected', icon: 'receipts', color: 'green', label: 'Collected Today', value: fmtINR(c.collectedTodayAmt), sub: c.custPaidToday + ' Customers Paid \u00B7 ' + c.collectedTodayCount + ' Receipts' }) +
+    RD_kpiCard({ key: 'duetoday', icon: 'upcoming', color: 'orange', label: 'Due Today', value: fmtINR(k.dueToday), sub: k.dueTodayInvoices + ' Invoices \u00B7 ' + k.dueTodayCustomers + ' Customers' }) +
+    RD_kpiCard({ key: 'due7', icon: 'upcoming', color: 'purple', label: 'Due in Next 7 Days', value: fmtINR(k.due7), sub: k.due7Invoices + ' Invoices \u00B7 ' + k.due7Customers + ' Customers' }) +
+    RD_kpiCard({ key: 'overdue', icon: 'overdue', color: 'red', label: 'Overdue Amount', value: fmtINR(k.overdueAmount), sub: k.overdueCustomers + ' Customers \u00B7 ' + k.overdueInvoices + ' Invoices' }) +
+    RD_kpiCard({ key: 'age', icon: 'ageing', color: 'teal', label: 'Avg. Outstanding Age', value: Math.round(k.avgAge) + ' Days', sub: 'Weighted by Pending Amount' }) +
+  '</div>';
+}
+
+/* ---------------- Ageing donut + legend ---------------- */
+var AGE_COLORS = { 'Not Due': '#16A34A', '0-30': '#2563EB', '31-60': '#F59E0B', '61-90': '#DC2626', '90+': '#7C3AED' };
+var AGE_LABELS = { 'Not Due': 'Not Due', '0-30': '0\u201330 Days', '31-60': '31\u201360 Days', '61-90': '61\u201390 Days', '90+': '90+ Days' };
+
+function RD_renderAgeingPanel(c) {
+  var rows = c.ageing.summary.map(function (b) {
+    return '<div class="rd-legend-row" data-rd-action="ageing-drill" data-rd-bucket="' + b.bucket + '"><span class="rd-legend-dot" style="background:' + AGE_COLORS[b.bucket] + '"></span><span class="rd-legend-label">' + AGE_LABELS[b.bucket] + '</span><span class="rd-legend-val">' + b.pct.toFixed(1) + '%</span></div>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Receivable Ageing</h3><span class="rd-viewall" data-rd-action="nav" data-rd-view="ageing">View All</span></div>' +
+    '<div class="rd-panel-body">' +
+      (c.kpis.totalReceivable > 0 ? (
+      '<div class="rd-donut-wrap">' +
+        '<div class="rd-donut-canvas-box"><canvas id="rdChartAgeing"></canvas><div class="rd-donut-center"><div class="v">' + fmtINRShort(c.ageing.total) + '</div><div class="l">Total</div></div></div>' +
+        '<div class="rd-legend">' + rows + '</div>' +
+      '</div>' +
+      '<div class="rd-total-line"><span>Total Outstanding</span><span class="amt">' + fmtINR(c.ageing.total) + '</span></div>'
+      ) : '<div class="rd-panel-empty">No qualifying receivables for the selected filters.</div>') +
+    '</div></div>';
+}
+
+/* ---------------- Collection trend chart ---------------- */
+function RD_renderTrendPanel(c) {
+  var gran = RD.state.trendGranularity;
+  var toggle = ['daily', 'weekly', 'monthly'].map(function (g) {
+    return '<button class="' + (gran === g ? 'active' : '') + '" data-rd-action="trend-gran" data-rd-gran="' + g + '">' + g.charAt(0).toUpperCase() + g.slice(1) + '</button>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Collection Trend</h3><div class="rd-chart-toggle">' + toggle + '</div></div>' +
+    '<div class="rd-panel-body">' +
+      (c.trend.length ? '<canvas id="rdChartTrend" height="150"></canvas>' : '<div class="rd-panel-empty">No receipts recorded in this period.</div>') +
+    '</div></div>';
+}
+
+/* ---------------- Collection efficiency gauge ---------------- */
+function RD_renderEfficiencyPanel(c) {
+  var target = 90;
+  var color = c.efficiency >= target ? '#16A34A' : (c.efficiency >= target * 0.8 ? '#F59E0B' : '#DC2626');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Collection Efficiency</h3><span class="rd-panel-sub">' + RD.state.period + '</span></div>' +
+    '<div class="rd-panel-body">' +
+      '<div class="rd-gauge-wrap">' +
+        '<div class="rd-donut-canvas-box" style="width:130px;height:130px;"><canvas id="rdChartEfficiency"></canvas><div class="rd-donut-center"><div class="v" style="color:' + color + '">' + c.efficiency.toFixed(0) + '%</div><div class="l">Actual</div></div></div>' +
+        '<div class="rd-gauge-target">Target ' + target + '%' + (c.collectionDeltaPct !== null ? ' \u00B7 ' + (c.collectionDeltaPct >= 0 ? '+' : '') + c.collectionDeltaPct.toFixed(1) + '% vs previous period' : '') + '</div>' +
+      '</div>' +
+    '</div></div>';
+}
+
+/* ---------------- Upcoming collections mini panel ---------------- */
+var STATUS_CLASS = { 'Due Today': 'duetoday', 'Due Tomorrow': 'duetomorrow', 'Due This Week': 'dueweek', 'Due in 15 Days': 'due15', 'Due in 30 Days': 'due30', 'Future': 'future' };
+function RD_statusPill(text) { var cls = STATUS_CLASS[text] || 'future'; return '<span class="rd-status-pill ' + cls + '">' + esc(text) + '</span>'; }
+
+function RD_renderUpcomingMini(c) {
+  var rows = c.upcoming.slice(0, 5).map(function (r) {
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(r.partyName) + '"><td>' + fmtDateDisp(r.dueDate) + '</td><td>' + esc(r.partyName) + '</td><td class="num">' + fmtINR(r.pendingAmount) + '</td><td>' + r.daysLeft + '</td></tr>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Upcoming Collections</h3><span class="rd-viewall" data-rd-action="nav" data-rd-view="upcoming">View All</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;">' +
+      '<div class="rd-table-scroll" style="max-height:230px;"><table class="rd-table"><thead><tr><th>Due Date</th><th>Customer</th><th>Amount</th><th>Days</th></tr></thead><tbody>' +
+      (rows || '<tr class="rd-empty-row"><td colspan="4">No upcoming dues.</td></tr>') +
+      '</tbody></table></div>' +
+    '</div></div>';
+}
+
+/* ---------------- Ageing summary table ---------------- */
+function RD_renderAgeingSummaryTable(c) {
+  var rows = c.ageing.summary.map(function (b) {
+    var largest = b.rows.reduce(function (m, r) { return (!m || r.pendingAmount > m.pendingAmount) ? r : m; }, null);
+    return '<tr data-rd-action="ageing-drill" data-rd-bucket="' + b.bucket + '">' +
+      '<td><span class="rd-dot-indicator" style="background:' + AGE_COLORS[b.bucket] + '"></span>' + AGE_LABELS[b.bucket] + '</td>' +
+      '<td class="num">' + b.customers + '</td><td class="num">' + b.invoices + '</td><td class="num">' + fmtINR(b.amount) + '</td>' +
+      '<td class="num">' + b.pct.toFixed(1) + '%</td><td class="num">' + Math.round(b.weightedAvgDays) + '</td>' +
+      '<td>' + (largest ? esc(largest.partyName) : '\u2014') + '</td>' +
+      '<td><button class="rd-icon-mini" title="View">' + ICO.view + '</button></td>' +
+    '</tr>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Ageing Summary</h3><span class="rd-panel-sub">Total = ' + fmtINR(c.ageing.total) + '</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll"><table class="rd-table"><thead><tr><th>Ageing Bucket</th><th>Customers</th><th>Invoices</th><th>Outstanding</th><th>% of Total</th><th>Avg Days</th><th>Largest Customer</th><th></th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="8">No data.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+/* ---------------- Top outstanding customers ---------------- */
+function RD_renderTopCustomers(c) {
+  var rows = c.topCustomers.map(function (cu) {
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(cu.name) + '">' +
+      '<td>' + esc(cu.name) + '</td><td class="num">' + fmtINR(cu.totalOutstanding) + '</td>' +
+      '<td class="num">' + fmtINR(cu.overdueAmount) + '</td><td class="num">' + cu.maxOverdueDays + '</td>' +
+    '</tr>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Top Outstanding Customers</h3><span class="rd-viewall" data-rd-action="nav" data-rd-view="customers">View All</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll"><table class="rd-table"><thead><tr><th>Customer</th><th>Outstanding</th><th>Overdue</th><th>Max Days</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="4">No customers found.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+/* ---------------- Collection by sales person ---------------- */
+function RD_renderSalesPersonPanel(c) {
+  var maxOut = Math.max.apply(null, c.spGroups.map(function (g) { return g.totalOutstanding; }).concat([1]));
+  var rows = c.spGroups.slice(0, 8).map(function (g) {
+    var pct = Math.round((g.totalOutstanding / maxOut) * 100);
+    return '<div class="rd-progress-row" data-rd-action="filter-sp" data-rd-sp="' + esc(g.salesPerson) + '">' +
+      '<div class="rd-progress-name">' + esc(g.salesPerson) + '</div>' +
+      '<div class="rd-progress-track"><div class="rd-progress-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="rd-progress-pct">' + g.efficiency.toFixed(0) + '%</div>' +
+    '</div>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Collection by Sales Person</h3><span class="rd-panel-sub">' + RD.state.period + '</span></div>' +
+    '<div class="rd-panel-body">' + (rows || '<div class="rd-panel-empty">No sales person data.</div>') + '</div></div>';
+}
+
+/* ---------------- Recent collections ---------------- */
+function RD_renderRecentCollections(c) {
+  var rows = c.recentCollections.map(function (r) {
+    return '<tr><td>' + fmtDateDisp(r.receiptDate) + '</td><td>' + esc(r.receiptNo || '\u2014') + '</td><td>' + esc(r.partyName) + '</td><td class="num">' + fmtINR(r.amount) + '</td><td>' + esc(r.mode || '\u2014') + '</td></tr>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Recent Collections</h3><span class="rd-viewall" data-rd-action="nav" data-rd-view="receipts">View All</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:260px;"><table class="rd-table"><thead><tr><th>Date</th><th>Receipt No.</th><th>Customer</th><th>Amount</th><th>Mode</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="5">No receipts recorded yet.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+/* ---------------- Cash inflow forecast ---------------- */
+function RD_renderCashForecast(c) {
+  var f = c.forecast;
+  var rows = [['Today', f.today], ['Tomorrow', f.tomorrow], ['Next 7 Days', f.next7], ['Next 15 Days', f.next15], ['Next 30 Days', f.next30]]
+    .map(function (r) { return '<tr><td>' + r[0] + '</td><td class="num">' + fmtINR(r[1]) + '</td></tr>'; }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Cash Inflow Forecast</h3></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><table class="rd-table"><thead><tr><th>Period</th><th>Expected Inflow</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+}
+
+/* ---------------- Collection follow-up (due today, prioritized) ---------------- */
+function RD_renderFollowupPanel(c) {
+  var dueTodayRows = qualifiedRows(c.rows, RD.state.asOnDate).filter(function (r) { return r.dueDate && sameDay(r.dueDate, RD.state.asOnDate); });
+  dueTodayRows.sort(function (a, b) { return b.pendingAmount - a.pendingAmount; });
+  var n = dueTodayRows.length;
+  var rows = dueTodayRows.slice(0, 8).map(function (r, i) {
+    var tier = n <= 1 ? 'high' : (i < n / 3 ? 'high' : (i < (2 * n) / 3 ? 'medium' : 'low'));
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(r.partyName) + '"><td>' + esc(r.partyName) + '</td><td class="num">' + fmtINR(r.pendingAmount) + '</td><td><span class="rd-status-pill ' + tier + '">' + tier.charAt(0).toUpperCase() + tier.slice(1) + '</span></td></tr>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>Collection Follow-up (Due Today)</h3></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:230px;"><table class="rd-table"><thead><tr><th>Customer</th><th>Outstanding</th><th>Priority</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="3">Nothing due today.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+/* ---------------- AI / rule-based insights ---------------- */
+var INSIGHT_ICON = { info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  critical: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  positive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>' };
+
+function RD_renderInsightsPanel(c) {
+  var rows = c.insights.map(function (i) {
+    return '<div class="rd-insight-row"><div class="rd-insight-icon ' + i.type + '">' + INSIGHT_ICON[i.type] + '</div><div class="rd-insight-text">' + esc(i.text) + '</div></div>';
+  }).join('');
+  return '' +
+    '<div class="rd-panel"><div class="rd-panel-head"><h3>AI Insights</h3></div>' +
+    '<div class="rd-panel-body">' + (rows || '<div class="rd-panel-empty">No notable insights right now.</div>') + '</div></div>';
+}
+
+/* ============================================================================
+   CUSTOMER DRILL-DOWN MODAL
+   ============================================================================ */
+var MODAL_TABS = [
+  { key: 'open', label: 'Open Invoices' },
+  { key: 'receipts', label: 'Receipt History' },
+  { key: 'ageing', label: 'Ageing' },
+  { key: 'ledger', label: 'Ledger' },
+  { key: 'followups', label: 'Follow-ups' },
+  { key: 'details', label: 'Customer Details' }
+];
+
+function RD_customerRows(name) {
+  var key = normalizeName(name);
+  return RD.state.rows.filter(function (r) { return normalizeName(r.partyName) === key; });
+}
+
+function RD_renderModal() {
+  if (!RD.state.modal) return '';
+  var name = RD.state.modal.name;
+  var tab = RD.state.modal.tab || 'open';
+  var asOn = RD.state.asOnDate;
+  var custRowsAll = RD_customerRows(name);
+  var custRows = qualifiedRows(custRowsAll, asOn);
+  var totalOut = custRows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  var overdueAmt = custRows.filter(function (r) { return computeOverdueDays(r, asOn) > 0; }).reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  var notDueAmt = totalOut - overdueAmt;
+  var maxOverdue = custRows.reduce(function (m, r) { return Math.max(m, computeOverdueDays(r, asOn)); }, 0);
+  var custReceipts = (RD.state.receiptsByCustomer.get(normalizeName(name)) || []).slice().sort(function (a, b) { return (b.receiptDate ? b.receiptDate.getTime() : 0) - (a.receiptDate ? a.receiptDate.getTime() : 0); });
+  var lastReceipt = custReceipts.length ? custReceipts[0].receiptDate : null;
+  var nextDue = custRows.filter(function (r) { return r.dueDate && r.dueDate.getTime() >= asOn.getTime(); }).reduce(function (m, r) { return (!m || r.dueDate < m) ? r.dueDate : m; }, null);
+  var phone = (custRows[0] && custRows[0].phone) || '';
+  var salesPerson = (custRows[0] && custRows[0].salesPerson) || 'Unassigned';
+
+  var tabsHtml = MODAL_TABS.map(function (t) {
+    return '<div class="rd-modal-tab' + (tab === t.key ? ' active' : '') + '" data-rd-action="modal-tab" data-rd-tab="' + t.key + '">' + t.label + '</div>';
+  }).join('');
+
+  var body = '';
+  if (tab === 'open') {
+    var rows = custRows.map(function (r) {
+      var od = computeOverdueDays(r, asOn);
+      var bucket = ageingBucket(od, r.dueDate, asOn);
+      var status = od > 90 ? 'Critical' : (od > 0 ? 'Overdue' : 'Not Due');
+      var statusCls = od > 90 ? 'critical' : (od > 0 ? 'overdue' : 'current');
+      return '<tr><td>' + esc(r.billRefNo || '\u2014') + '</td><td>' + fmtDateDisp(r.billDate) + '</td><td>' + fmtDateDisp(r.dueDate) + '</td><td class="num">' + fmtINR(r.pendingAmount) + '</td><td class="num">' + od + '</td><td>' + AGE_LABELS[bucket] + '</td><td><span class="rd-status-pill ' + statusCls + '">' + status + '</span></td></tr>';
+    }).join('');
+    body = '<table class="rd-table"><thead><tr><th>Invoice No.</th><th>Bill Date</th><th>Due Date</th><th>Pending</th><th>Overdue Days</th><th>Ageing Bucket</th><th>Status</th></tr></thead><tbody>' + (rows || '<tr class="rd-empty-row"><td colspan="7">No open invoices.</td></tr>') + '</tbody></table>';
+  } else if (tab === 'receipts') {
+    var rrows = custReceipts.map(function (r) {
+      return '<tr><td>' + fmtDateDisp(r.receiptDate) + '</td><td>' + esc(r.receiptNo || '\u2014') + '</td><td class="num">' + fmtINR(r.amount) + '</td><td>' + esc(r.mode || '\u2014') + '</td><td>' + esc(r.reference || '\u2014') + '</td></tr>';
+    }).join('');
+    body = '<table class="rd-table"><thead><tr><th>Receipt Date</th><th>Receipt No.</th><th>Amount</th><th>Mode</th><th>Reference</th></tr></thead><tbody>' + (rrows || '<tr class="rd-empty-row"><td colspan="5">No receipts recorded for this customer.</td></tr>') + '</tbody></table>';
+  } else if (tab === 'ageing') {
+    var age = computeAgeing(custRowsAll, asOn);
+    var arows = age.summary.filter(function (b) { return b.invoices > 0; }).map(function (b) {
+      return '<tr><td><span class="rd-dot-indicator" style="background:' + AGE_COLORS[b.bucket] + '"></span>' + AGE_LABELS[b.bucket] + '</td><td class="num">' + b.invoices + '</td><td class="num">' + fmtINR(b.amount) + '</td><td class="num">' + Math.round(b.weightedAvgDays) + '</td></tr>';
+    }).join('');
+    body = '<table class="rd-table"><thead><tr><th>Bucket</th><th>Invoices</th><th>Amount</th><th>Avg Days</th></tr></thead><tbody>' + (arows || '<tr class="rd-empty-row"><td colspan="4">No data.</td></tr>') + '</tbody></table>';
+  } else if (tab === 'ledger') {
+    body = '<div id="rdLedgerBody"><div class="rd-panel-empty">' + (RD.state.balanceAvailable ? 'Loading ledger\u2026' : 'No Balance/Ledger sheet was detected in this spreadsheet.') + '</div></div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button class="rd-btn-ghost" data-rd-action="ledger-print">' + ICO.print + ' Print</button>' +
+        '<button class="rd-btn-ghost" data-rd-action="ledger-pdf">' + ICO.download + ' PDF</button>' +
+        '<button class="rd-btn-ghost" data-rd-action="ledger-excel">' + ICO.download + ' Excel (CSV)</button>' +
+        '<button class="rd-btn-ghost" data-rd-action="ledger-whatsapp">' + ICO.whatsapp + ' WhatsApp Statement</button>' +
+      '</div>';
+  } else if (tab === 'followups') {
+    var key = normalizeName(name);
+    var list = RD.state.followups[key] || [];
+    var frows = list.slice().reverse().map(function (f) {
+      return '<div class="rd-followup-item">' + esc(f.text) + '<div class="meta">' + esc(f.date) + '</div></div>';
+    }).join('');
+    body = '<div style="margin-bottom:12px;"><button class="rd-btn-ghost" data-rd-action="add-followup" data-rd-customer="' + esc(name) + '">' + ICO.plus + ' Add Follow-up</button></div>' + (frows || '<div class="rd-panel-empty">No follow-ups logged yet.</div>');
+  } else if (tab === 'details') {
+    body = '<div class="rd-detail-grid">' +
+      '<div class="rd-detail-field"><div class="l">Customer Name</div><div class="v">' + esc(name) + '</div></div>' +
+      '<div class="rd-detail-field"><div class="l">Sales Person</div><div class="v">' + esc(salesPerson) + '</div></div>' +
+      '<div class="rd-detail-field"><div class="l">Phone</div><div class="v">' + esc(phone || '\u2014') + '</div></div>' +
+      '<div class="rd-detail-field"><div class="l">Payment Terms</div><div class="v">' + esc((custRows[0] && custRows[0].paymentTerms) || '\u2014') + '</div></div>' +
+      '<div class="rd-detail-field"><div class="l">Customer Group</div><div class="v">' + esc((custRows[0] && custRows[0].subGroup) || '\u2014') + '</div></div>' +
+      '<div class="rd-detail-field"><div class="l">Main Group</div><div class="v">' + esc((custRows[0] && custRows[0].mainGroup) || '\u2014') + '</div></div>' +
+    '</div>';
+  }
+
+  return '' +
+    '<div class="rd-modal-overlay" data-rd-action="modal-close-overlay">' +
+      '<div class="rd-modal-card" data-rd-stop="1">' +
+        '<div class="rd-modal-head"><div class="rd-modal-head-left"><h3>' + esc(name) + '</h3><div class="sub">Customer Drill-down \u00B7 As on ' + fmtDateDisp(asOn) + '</div></div><button class="rd-modal-close" data-rd-action="modal-close">\u2715</button></div>' +
+        '<div class="rd-modal-kpis">' +
+          '<div class="rd-modal-kpi"><div class="l">Outstanding</div><div class="v">' + fmtINR(totalOut) + '</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Overdue</div><div class="v">' + fmtINR(overdueAmt) + '</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Not Due</div><div class="v">' + fmtINR(notDueAmt) + '</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Max Overdue</div><div class="v">' + maxOverdue + ' Days</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Open Invoices</div><div class="v">' + custRows.length + '</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Last Receipt</div><div class="v">' + (lastReceipt ? fmtDateDisp(lastReceipt) : '\u2014') + '</div></div>' +
+          '<div class="rd-modal-kpi"><div class="l">Next Due</div><div class="v">' + (nextDue ? fmtDateDisp(nextDue) : '\u2014') + '</div></div>' +
+        '</div>' +
+        '<div class="rd-modal-tabs">' + tabsHtml + '</div>' +
+        '<div class="rd-modal-body">' + body + '</div>' +
+        '<div class="rd-modal-foot">' +
+          (phone ? '<a class="rd-btn-ghost" href="tel:' + esc(phone.split(',')[0].trim()) + '">' + ICO.phone + ' Call</a>' : '') +
+          (phone ? '<a class="rd-btn-ghost" target="_blank" href="https://wa.me/91' + esc(phone.replace(/\D/g, '').split(',')[0].trim().slice(-10)) + '?text=' + encodeURIComponent('Dear ' + name + ', your outstanding amount is ' + fmtINR(totalOut) + '. Kindly clear at the earliest.') + '">' + ICO.whatsapp + ' WhatsApp Reminder</a>' : '') +
+          '<button class="rd-btn-primary" data-rd-action="modal-close">Close</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function RD_loadLedgerIfNeeded() {
+  if (!RD.state.modal || RD.state.modal.tab !== 'ledger' || !RD.state.balanceAvailable) return;
+  var name = RD.state.modal.name;
+  RD_runServer('getLedgerForCustomer', name).then(function (data) {
+    var el = document.getElementById('rdLedgerBody');
+    if (!el) return;
+    if (!data.found || !data.rows.length) { el.innerHTML = '<div class="rd-panel-empty">No ledger entries found for this customer.</div>'; return; }
+    var normed = data.headers.map(normHeader);
+    function idx(aliases) { for (var i = 0; i < normed.length; i++) { for (var a = 0; a < aliases.length; a++) { if (normed[i].indexOf(aliases[a]) !== -1) return i; } } return -1; }
+    var iDate = idx(['VOUCHER_DATE']), iPart = idx(['VOUCHER_PARTICULAR']), iType = idx(['VOUCHER_TYPE']), iNo = idx(['VOUCHER_NO']), iDeb = idx(['VOUCHER_DEBIT']), iCred = idx(['VOUCHER_CREDIT']), iOpen = idx(['OPENING_BALANCE']), iClose = idx(['CLOSING_BALANCE']);
+    var rows = data.rows.map(function (r) {
+      return '<tr><td>' + esc(r[iDate] || '') + '</td><td>' + esc(r[iPart] || '') + '</td><td>' + esc(r[iType] || '') + '</td><td>' + esc(r[iNo] || '') + '</td><td class="num">' + (iDeb > -1 ? fmtINR(parseCurrency(r[iDeb])) : '') + '</td><td class="num">' + (iCred > -1 ? fmtINR(parseCurrency(r[iCred])) : '') + '</td><td class="num">' + (iOpen > -1 ? fmtINR(parseCurrency(r[iOpen])) : '') + '</td><td class="num">' + (iClose > -1 ? fmtINR(parseCurrency(r[iClose])) : '') + '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div class="rd-table-scroll" style="max-height:320px;"><table class="rd-table"><thead><tr><th>Date</th><th>Particular</th><th>Type</th><th>Voucher No.</th><th>Debit</th><th>Credit</th><th>Opening</th><th>Closing</th></tr></thead><tbody>' + (rows || '<tr class="rd-empty-row"><td colspan="8">No entries.</td></tr>') + '</tbody></table></div>';
+  }).catch(function (err) {
+    var el = document.getElementById('rdLedgerBody');
+    if (el) el.innerHTML = '<div class="rd-panel-empty">Failed to load ledger: ' + esc(err.message) + '</div>';
+  });
+}
+
+/* ============================================================================
+   MAIN RENDER
+   ============================================================================ */
+RD.state.view = 'dashboard';
+
+function RD_renderDashboardView(c) {
+  return '' +
+    RD_renderKpis(c) +
+    '<div class="rd-grid rd-grid-4">' + RD_renderTrendPanel(c) + RD_renderAgeingPanel(c) + RD_renderEfficiencyPanel(c) + RD_renderUpcomingMini(c) + '</div>' +
+    '<div class="rd-grid rd-grid-3">' + RD_renderAgeingSummaryTable(c) + RD_renderTopCustomers(c) + RD_renderSalesPersonPanel(c) + '</div>' +
+    '<div class="rd-grid rd-grid-4">' + RD_renderRecentCollections(c) + RD_renderCashForecast(c) + RD_renderFollowupPanel(c) + RD_renderInsightsPanel(c) + '</div>' +
+    '<div class="rd-updated-note">Data as on ' + fmtDateDisp(RD.state.asOnDate) + ' \u00B7 Synced ' + (RD.state.generatedAt ? fmtDateDisp(RD.state.generatedAt) : '--') + '</div>';
+}
+
+function RD_renderAgeingView(c) {
+  return '<div class="rd-grid rd-grid-2b">' + RD_renderAgeingPanel(c) + RD_renderAgeingSummaryTable(c) + '</div>';
+}
+
+function RD_renderCustomersView(c) {
+  var rows = c.customerList.map(function (cu) {
+    var statusCls = { Current: 'current', Due: 'due', Overdue: 'overdue', 'High Risk': 'highrisk', Critical: 'critical' }[cu.status] || 'current';
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(cu.name) + '">' +
+      '<td>' + esc(cu.name) + '</td><td class="num">' + fmtINR(cu.totalOutstanding) + '</td><td class="num">' + fmtINR(cu.overdueAmount) + '</td><td class="num">' + fmtINR(cu.notDueAmount) + '</td>' +
+      '<td class="num">' + cu.invoiceCount + '</td><td>' + (cu.oldestDueDate ? fmtDateDisp(cu.oldestDueDate) : '\u2014') + '</td><td class="num">' + cu.maxOverdueDays + '</td>' +
+      '<td>' + esc(cu.salesPerson) + '</td><td>' + esc(cu.phone || '\u2014') + '</td><td><span class="rd-status-pill ' + statusCls + '">' + cu.status + '</span></td>' +
+      '<td><div class="rd-action-row"><button class="rd-icon-mini" title="View">' + ICO.view + '</button></div></td>' +
+    '</tr>';
+  }).join('');
+  return '<div class="rd-panel"><div class="rd-panel-head"><h3>Customer Outstanding List</h3><span class="rd-panel-sub">' + c.customerList.length + ' customers</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:70vh;"><table class="rd-table"><thead><tr><th>Customer</th><th>Total Outstanding</th><th>Overdue</th><th>Not Due</th><th>Invoices</th><th>Oldest Due</th><th>Max Overdue</th><th>Sales Person</th><th>Phone</th><th>Status</th><th></th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="11">No customers.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+function RD_renderUpcomingView(c) {
+  var rows = c.upcoming.map(function (r) {
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(r.partyName) + '">' +
+      '<td>' + fmtDateDisp(r.dueDate) + '</td><td>' + esc(r.partyName) + '</td><td>' + esc(r.billRefNo || '\u2014') + '</td><td class="num">' + fmtINR(r.pendingAmount) + '</td><td class="num">' + r.daysLeft + '</td>' +
+      '<td>' + esc(r.salesPerson || 'Unassigned') + '</td><td>' + esc(r.phone || '\u2014') + '</td><td>' + esc(r.paymentTerms || '\u2014') + '</td><td>' + RD_statusPill(r.status) + '</td>' +
+      '<td><div class="rd-action-row"><button class="rd-icon-mini" title="Open Ledger" data-rd-action="view-customer-tab" data-rd-customer="' + esc(r.partyName) + '" data-rd-tab="ledger">' + ICO.ledgerMini + '</button></div></td>' +
+    '</tr>';
+  }).join('');
+  return '<div class="rd-panel"><div class="rd-panel-head"><h3>Upcoming Collections</h3><span class="rd-panel-sub">' + c.upcoming.length + ' invoices</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:70vh;"><table class="rd-table"><thead><tr><th>Due Date</th><th>Customer</th><th>Invoice No.</th><th>Pending</th><th>Days Left</th><th>Sales Person</th><th>Phone</th><th>Terms</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="10">No upcoming collections.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+function RD_renderOverdueView(c) {
+  var overdueCustomers = c.customerList.filter(function (cu) { return cu.overdueAmount > 0; }).sort(function (a, b) { return b.overdueAmount - a.overdueAmount; });
+  var rows = overdueCustomers.map(function (cu) {
+    var statusCls = { Current: 'current', Due: 'due', Overdue: 'overdue', 'High Risk': 'highrisk', Critical: 'critical' }[cu.status] || 'overdue';
+    return '<tr data-rd-action="view-customer" data-rd-customer="' + esc(cu.name) + '"><td>' + esc(cu.name) + '</td><td class="num">' + fmtINR(cu.overdueAmount) + '</td><td class="num">' + cu.maxOverdueDays + '</td><td>' + esc(cu.salesPerson) + '</td><td><span class="rd-status-pill ' + statusCls + '">' + cu.status + '</span></td></tr>';
+  }).join('');
+  return '<div class="rd-panel"><div class="rd-panel-head"><h3>Overdue Customers</h3><span class="rd-panel-sub">' + overdueCustomers.length + ' customers</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:70vh;"><table class="rd-table"><thead><tr><th>Customer</th><th>Overdue Amount</th><th>Max Overdue Days</th><th>Sales Person</th><th>Status</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="5">No overdue customers.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+function RD_renderReceiptsView(c) {
+  var all = computeRecentCollections(RD.state.receipts, null);
+  var rows = all.map(function (r) {
+    return '<tr><td>' + fmtDateDisp(r.receiptDate) + '</td><td>' + esc(r.receiptNo || '\u2014') + '</td><td>' + esc(r.partyName) + '</td><td class="num">' + fmtINR(r.amount) + '</td><td>' + esc(r.mode || '\u2014') + '</td><td>' + esc(r.reference || '\u2014') + '</td><td>' + esc(r.salesPerson || 'Unassigned') + '</td></tr>';
+  }).join('');
+  return '<div class="rd-panel"><div class="rd-panel-head"><h3>Receipt List</h3><span class="rd-panel-sub">' + all.length + ' receipts</span></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:70vh;"><table class="rd-table"><thead><tr><th>Receipt Date</th><th>Receipt No.</th><th>Customer</th><th>Amount</th><th>Mode</th><th>Reference</th><th>Sales Person</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="7">No receipts recorded. Add a sheet with Party_Name/Amount/Receipt_Date columns to populate this.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+function RD_renderSalesPersonView(c) {
+  var rows = c.spGroups.map(function (g) {
+    return '<tr data-rd-action="filter-sp" data-rd-sp="' + esc(g.salesPerson) + '"><td>' + esc(g.salesPerson) + '</td><td class="num">' + fmtINR(g.totalOutstanding) + '</td><td class="num">' + fmtINR(g.overdueAmount) + '</td><td class="num">' + fmtINR(g.over90Amount) + '</td><td class="num">' + fmtINR(g.due7) + '</td><td class="num">' + g.customerCount + '</td><td class="num">' + fmtINR(g.collectionMTD) + '</td><td class="num">' + g.efficiency.toFixed(1) + '%</td></tr>';
+  }).join('');
+  return '<div class="rd-panel"><div class="rd-panel-head"><h3>Collection by Sales Person</h3></div>' +
+    '<div class="rd-panel-body" style="padding:0;"><div class="rd-table-scroll" style="max-height:70vh;"><table class="rd-table"><thead><tr><th>Sales Person</th><th>Outstanding</th><th>Overdue</th><th>90+ Amount</th><th>Due in 7 Days</th><th>Customers</th><th>Collection MTD</th><th>Efficiency</th></tr></thead><tbody>' +
+    (rows || '<tr class="rd-empty-row"><td colspan="8">No data.</td></tr>') + '</tbody></table></div></div></div>';
+}
+
+function RD_render() {
+  var app = document.getElementById('app');
+  if (!RD.state.ready) {
+    app.innerHTML = '<div class="rd-loading"><div class="rd-spinner"></div><div>Loading receivables data\u2026</div></div>';
+    return;
+  }
+  if (RD.state.error) {
+    app.innerHTML = '<div class="rd-error-box"><h3>Could not load data</h3><p>' + esc(RD.state.error) + '</p><button class="rd-btn-primary" data-rd-action="retry">Retry</button></div>';
+    RD_bindGlobalDelegation();
+    return;
+  }
+
+  var c = RD_computeAll();
+  var viewHtml = '';
+  switch (RD.state.view) {
+    case 'ageing': viewHtml = RD_renderAgeingView(c); break;
+    case 'customers': viewHtml = RD_renderCustomersView(c); break;
+    case 'upcoming': viewHtml = RD_renderUpcomingView(c); break;
+    case 'overdue': viewHtml = RD_renderOverdueView(c); break;
+    case 'receipts': viewHtml = RD_renderReceiptsView(c); break;
+    case 'salesperson': viewHtml = RD_renderSalesPersonView(c); break;
+    default: viewHtml = RD_renderDashboardView(c);
+  }
+
+  app.innerHTML = '' +
+    '<div class="rd-shell">' + RD_renderSidebar() +
+      '<div class="rd-main">' + RD_renderTopbar() + '<div class="rd-content">' + viewHtml + '</div></div>' +
+    '</div>' +
+    RD_renderModal() +
+    (RD.state.toast ? '<div class="rd-toast' + (RD.state.toast.isErr ? ' err' : '') + '">' + esc(RD.state.toast.msg) + '</div>' : '');
+
+  RD_renderCharts(c);
+  RD_loadLedgerIfNeeded();
+  RD_bindGlobalDelegation();
+}
+
+/* ---------------- Chart.js rendering ---------------- */
+function RD_destroyChart(id) { if (RD.state.charts[id]) { RD.state.charts[id].destroy(); delete RD.state.charts[id]; } }
+
+function RD_renderCharts(c) {
+  if (typeof Chart === 'undefined') return;
+
+  RD_destroyChart('ageing');
+  var ageCanvas = document.getElementById('rdChartAgeing');
+  if (ageCanvas && c.ageing.total > 0) {
+    var buckets = c.ageing.summary.filter(function (b) { return b.amount > 0; });
+    RD.state.charts.ageing = new Chart(ageCanvas.getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: buckets.map(function (b) { return AGE_LABELS[b.bucket]; }), datasets: [{ data: buckets.map(function (b) { return b.amount; }), backgroundColor: buckets.map(function (b) { return AGE_COLORS[b.bucket]; }), borderWidth: 0 }] },
+      options: { cutout: '72%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (ctx) { return ctx.label + ': ' + fmtINR(ctx.parsed); } } } } }
+    });
+  }
+
+  RD_destroyChart('efficiency');
+  var effCanvas = document.getElementById('rdChartEfficiency');
+  if (effCanvas) {
+    var eff = Math.min(100, c.efficiency);
+    var color = eff >= 90 ? '#16A34A' : (eff >= 72 ? '#F59E0B' : '#DC2626');
+    RD.state.charts.efficiency = new Chart(effCanvas.getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: ['Efficiency', 'Remaining'], datasets: [{ data: [eff, 100 - eff], backgroundColor: [color, '#EFF2F7'], borderWidth: 0 }] },
+      options: { cutout: '76%', rotation: -90, circumference: 360, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+    });
+  }
+
+  RD_destroyChart('trend');
+  var trendCanvas = document.getElementById('rdChartTrend');
+  if (trendCanvas && c.trend.length) {
+    RD.state.charts.trend = new Chart(trendCanvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: c.trend.map(function (t) { return t.period; }),
+        datasets: [{ label: 'Collections', data: c.trend.map(function (t) { return t.amount; }), backgroundColor: '#2563EB', borderRadius: 4, maxBarThickness: 28 }]
+      },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (ctx) { return fmtINR(ctx.parsed.y); } } } },
+        scales: { y: { ticks: { callback: function (v) { return fmtINRShort(v); } }, grid: { color: '#EFF2F7' } }, x: { grid: { display: false } } }
+      }
+    });
+  }
+}
+
+/* ============================================================================
+   EVENT HANDLING (delegated)
+   ============================================================================ */
+var RD_boundDelegation = false;
+function RD_bindGlobalDelegation() {
+  if (RD_boundDelegation) return;
+  RD_boundDelegation = true;
+
+  document.addEventListener('click', function (e) {
+    var stopEl = e.target.closest('[data-rd-stop]');
+    var overlayEl = e.target.closest('[data-rd-action="modal-close-overlay"]');
+    if (overlayEl && !stopEl) { RD.state.modal = null; RD_render(); return; }
+
+    var el = e.target.closest('[data-rd-action]');
+    if (!el) return;
+    var a = el.getAttribute('data-rd-action');
+
+    if (a === 'nav') { RD.state.view = el.getAttribute('data-rd-view'); RD.state.sidebarOpen = false; RD_render(); return; }
+    if (a === 'toggle-sidebar') { RD.state.sidebarOpen = !RD.state.sidebarOpen; RD_render(); return; }
+    if (a === 'refresh') { RD_refresh(); return; }
+    if (a === 'retry') { RD_loadAll(); return; }
+    if (a === 'period') { RD.state.period = el.getAttribute('data-rd-period'); if (RD.state.period === 'Custom') { RD_openCustomDatePicker(); } RD_render(); return; }
+    if (a === 'compare') { RD.state.compare = !RD.state.compare; RD_render(); return; }
+    if (a === 'reset-filters') { RD.state.filters = { company: 'All', branch: 'All', salesPerson: 'All', customerGroup: 'All', customer: 'All', search: '' }; RD_render(); return; }
+    if (a === 'view-customer') { RD.state.modal = { name: el.getAttribute('data-rd-customer'), tab: 'open' }; RD_render(); return; }
+    if (a === 'view-customer-tab') { RD.state.modal = { name: el.getAttribute('data-rd-customer'), tab: el.getAttribute('data-rd-tab') }; RD_render(); return; }
+    if (a === 'modal-close') { RD.state.modal = null; RD_render(); return; }
+    if (a === 'modal-tab') { if (RD.state.modal) { RD.state.modal.tab = el.getAttribute('data-rd-tab'); RD_render(); } return; }
+    if (a === 'filter-sp') { RD.state.filters.salesPerson = el.getAttribute('data-rd-sp'); RD_render(); return; }
+    if (a === 'ageing-drill') { RD.state.view = 'customers'; RD.state.ageBucketFocus = el.getAttribute('data-rd-bucket'); RD_render(); return; }
+    if (a === 'trend-gran') { RD.state.trendGranularity = el.getAttribute('data-rd-gran'); RD_render(); return; }
+    if (a === 'add-followup') {
+      var custName = el.getAttribute('data-rd-customer');
+      var text = window.prompt('Add a follow-up note for ' + custName + ':');
+      if (text) {
+        var key = normalizeName(custName);
+        if (!RD.state.followups[key]) RD.state.followups[key] = [];
+        RD.state.followups[key].push({ text: text, date: fmtDateDisp(new Date()) + ' ' + new Date().toLocaleTimeString() });
+        RD_saveFollowups();
+        RD_render();
+      }
+      return;
+    }
+    if (a === 'ledger-print') { window.print(); return; }
+    if (a === 'ledger-pdf') { RD_toast('Use your browser\u2019s Print dialog and choose "Save as PDF".', false); window.print(); return; }
+    if (a === 'ledger-excel') { RD_exportLedgerCsv(); return; }
+    if (a === 'ledger-whatsapp') { RD_ledgerWhatsapp(); return; }
+    if (a === 'kpi-drill') {
+      var kpi = el.getAttribute('data-rd-kpi');
+      if (kpi === 'overdue') RD.state.view = 'overdue';
+      else if (kpi === 'duetoday' || kpi === 'due7') RD.state.view = 'upcoming';
+      else if (kpi === 'collected') RD.state.view = 'receipts';
+      else RD.state.view = 'customers';
+      RD_render();
+      return;
+    }
+  });
+
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (el.getAttribute('data-rd-action') === 'filter') {
+      var f = el.getAttribute('data-rd-filter');
+      RD.state.filters[f] = el.value;
+      RD_render();
+    }
+  });
+
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (el.getAttribute('data-rd-action') === 'search') {
+      RD.state.filters.search = el.value;
+      clearTimeout(RD._searchTimer);
+      RD._searchTimer = setTimeout(function () { RD_render(); }, 300);
+    }
+  });
+}
+
+function RD_openCustomDatePicker() {
+  if (typeof flatpickr === 'undefined') return;
+  setTimeout(function () {
+    var el = document.getElementById('rdAsOnDate');
+    if (!el) return;
+    el.removeAttribute('readonly');
+    flatpickr(el, {
+      dateFormat: 'd-M-Y', defaultDate: RD.state.asOnDate,
+      onChange: function (sel) { if (sel[0]) { RD.state.asOnDate = RD_startOfDay(sel[0]); RD_render(); } }
+    });
+  }, 30);
+}
+
+function RD_exportLedgerCsv() {
+  var el = document.getElementById('rdLedgerBody');
+  if (!el) return;
+  var table = el.querySelector('table');
+  if (!table) { RD_toast('No ledger data to export.', true); return; }
+  var rows = Array.from(table.querySelectorAll('tr')).map(function (tr) {
+    return Array.from(tr.querySelectorAll('th,td')).map(function (td) { return '"' + td.textContent.replace(/"/g, '""') + '"'; }).join(',');
+  });
+  var csv = rows.join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = (RD.state.modal ? RD.state.modal.name : 'ledger') + '_statement.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function RD_ledgerWhatsapp() {
+  if (!RD.state.modal) return;
+  var name = RD.state.modal.name;
+  var rows = RD_customerRows(name);
+  var qrows = qualifiedRows(rows, RD.state.asOnDate);
+  var total = qrows.reduce(function (s, r) { return s + r.pendingAmount; }, 0);
+  var phone = (rows[0] && rows[0].phone) || '';
+  var msg = 'Dear ' + name + ',\nYour current outstanding balance as on ' + fmtDateDisp(RD.state.asOnDate) + ' is ' + fmtINR(total) + ' across ' + qrows.length + ' invoice(s). Kindly arrange payment at the earliest.\n\nRegards.';
+  var digits = phone.replace(/\D/g, '').split(',')[0];
+  var url = 'https://wa.me/' + (digits ? '91' + digits.slice(-10) : '') + '?text=' + encodeURIComponent(msg);
+  window.open(url, '_blank');
+}
+
+/* ---------------- Boot ---------------- */
+RD_loadAll();
+</script>
