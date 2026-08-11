@@ -321,8 +321,11 @@ function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws,
   css += '*{box-sizing:border-box;}';
   css += 'html,body{margin:0;padding:0;}';
   css += 'body{font-family:Roboto,Arial,sans-serif;font-size:9pt;}';
-  css += '.pdf-page{width:100%;position:relative;page-break-after:always;break-after:page;}';
-  css += '.pdf-page:last-child{page-break-after:auto;break-after:auto;}';
+  // Use one page-break-before rule for every page after the first. The
+  // Apps Script HTML-to-PDF converter can create a blank page when both
+  // page-break-after and break-after are applied to adjacent sections.
+  css += '.pdf-page{width:100%;position:relative;}';
+  css += '.pdf-page + .pdf-page{page-break-before:always;}';
   css += '.pdf-table{border-collapse:collapse;width:100%;table-layout:fixed;}';
   css += '.pdf-table tr{page-break-inside:avoid;break-inside:avoid;}';
   css += '.pdf-table td{padding:1px 3px;border:0.5px solid #999;';
