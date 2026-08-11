@@ -26,6 +26,9 @@ var QPDF_PAGE_HEIGHT = 1050;
 var QPDF_CONTINUATION_HEIGHT = 14;
 var QPDF_MAX_COMPRESSION_OVERFLOW = 1.08;
 var QPDF_MIN_ROW_HEIGHT = 8;
+// Use the available blank space on page 1 for about four more product rows.
+// Later item pages keep the normal capacity so the continuation remains stable.
+var QPDF_EXTRA_FIRST_PAGE_ROWS = 4;
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -249,6 +252,22 @@ function qpdfChunks_(rows, capacity) {
   return result;
 }
 
+function qpdfItemChunks_(rows, normalCapacity) {
+  if (!rows.length) return [];
+
+  var averageHeight = qpdfRowsHeight_(rows) / rows.length;
+  var firstCapacity = normalCapacity +
+    averageHeight * QPDF_EXTRA_FIRST_PAGE_ROWS;
+  var firstChunk = qpdfChunks_(rows, firstCapacity)[0];
+  var consumed = firstChunk.end - rows[0].row + 1;
+  var remaining = rows.slice(consumed);
+  var result = [firstChunk];
+
+  // All later item pages use the normal capacity. Only page 1 receives the
+  // extra four-row allowance requested for the visible blank space.
+  return result.concat(qpdfChunks_(remaining, normalCapacity));
+}
+
 function qpdfPlan_(sheet, visibleEnd, termsRow, lastRow) {
   var pageHeight = qpdfPageHeight_(sheet);
   var headerHeight = qpdfHeight_(sheet, 1, QPDF_HEADER_LAST);
@@ -256,7 +275,7 @@ function qpdfPlan_(sheet, visibleEnd, termsRow, lastRow) {
   var itemRows = qpdfRows_(sheet, QPDF_ITEM_FIRST, visibleEnd);
   var middleRows = qpdfRows_(sheet, visibleEnd + 1, termsRow - 1);
   var termsRows = qpdfRows_(sheet, termsRow, lastRow);
-  var itemChunks = qpdfChunks_(itemRows, itemCapacity);
+  var itemChunks = qpdfItemChunks_(itemRows, itemCapacity);
   var pages = [];
 
   for (var i = 0; i < itemChunks.length; i++) {
