@@ -23,7 +23,7 @@ var QPDF_REF_CELL = 'N16';
 // A4 export dimensions used below and are based on the source sheet width.
 var QPDF_PAGE_WIDTH = 800;
 var QPDF_PAGE_HEIGHT = 1050;
-var QPDF_CONTINUATION_HEIGHT = 14;
+var QPDF_CONTINUATION_HEIGHT = 24;
 var QPDF_MAX_COMPRESSION_OVERFLOW = 1.08;
 var QPDF_MIN_ROW_HEIGHT = 8;
 // Use the available blank space on page 1 for about four more product rows.
@@ -439,13 +439,8 @@ function qpdfMakePage_(template, book, number, plan) {
     page.deleteRows(1, plan.start - 1);
   }
 
-  if (plan.continuation) {
-    qpdfAddContinuationNote_(page);
-  }
-
-  // Give the final terms/Thanks row enough room before compacting only a
-  // slightly oversized temporary page.
-  if (plan.kind === 'terms') {
+  // Preserve the final Thanks/name row before fitting the content page.
+  if (plan.kind === 'terms' || plan.kind === 'content_with_terms') {
     var finalRow = page.getMaxRows();
     page.setRowHeight(
       finalRow,
@@ -453,7 +448,14 @@ function qpdfMakePage_(template, book, number, plan) {
     );
   }
 
+  // Fit content first. The continuation row is added afterwards so its
+  // height is never reduced by qpdfFitPageToOnePage_.
   qpdfFitPageToOnePage_(page);
+
+  if (plan.continuation) {
+    qpdfAddContinuationNote_(page);
+  }
+
   SpreadsheetApp.flush();
 }
 
