@@ -23,7 +23,9 @@ var QPDF_REF_CELL = 'N16';
 // A4 export dimensions used below and are based on the source sheet width.
 var QPDF_PAGE_WIDTH = 800;
 var QPDF_PAGE_HEIGHT = 1050;
-var QPDF_CONTINUATION_HEIGHT = 24;
+var QPDF_CONTINUATION_HEIGHT = 28;
+var QPDF_CONTINUATION_BOTTOM_MARGIN = 24;
+var QPDF_CONTINUATION_MIN_SPACER = 120;
 var QPDF_MAX_COMPRESSION_OVERFLOW = 1.08;
 var QPDF_MIN_ROW_HEIGHT = 8;
 // Use the available blank space on page 1 for about four more product rows.
@@ -497,8 +499,14 @@ function qpdfAddContinuationNote_(page) {
   var last = page.getMaxRows();
   var allowed = qpdfPageHeight_(page) - 8;
   var used = qpdfHeight_(page, 1, last);
-  var spacerHeight = Math.floor(
-    allowed - used - QPDF_CONTINUATION_HEIGHT
+  var spacerHeight = Math.max(
+    QPDF_CONTINUATION_MIN_SPACER,
+    Math.floor(
+      allowed -
+      used -
+      QPDF_CONTINUATION_HEIGHT -
+      QPDF_CONTINUATION_BOTTOM_MARGIN
+    )
   );
 
   // Keep the continuation label at the physical bottom-right of the page.
@@ -535,11 +543,26 @@ function qpdfAddContinuationNote_(page) {
   note.setValue('Cont. on next page');
   note.setHorizontalAlignment('right');
   note.setVerticalAlignment('middle');
-  note.setFontSize(7);
+  note.setFontSize(8);
   note.setFontWeight('bold');
   note.setFontStyle('normal');
   note.setFontColor('#777777');
   page.setRowHeight(noteRow, QPDF_CONTINUATION_HEIGHT);
+
+  // Keep the label safely above the printable bottom edge. This margin is
+  // intentionally blank and does not alter any quotation content.
+  page.insertRowAfter(noteRow);
+  var bottomRow = page.getMaxRows();
+  var bottomSpacer = page.getRange(
+    bottomRow,
+    1,
+    1,
+    page.getLastColumn()
+  );
+  bottomSpacer.clear();
+  bottomSpacer.setBackground('#ffffff');
+  bottomSpacer.setBorder(false, false, false, false, false, false);
+  page.setRowHeight(bottomRow, QPDF_CONTINUATION_BOTTOM_MARGIN);
 }
 
 function qpdfFitPageToOnePage_(page) {
