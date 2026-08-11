@@ -493,8 +493,34 @@ function qpdfTrimNewPage_(page, lastKeptRow) {
 
 function qpdfAddContinuationNote_(page) {
   var last = page.getMaxRows();
-  page.insertRowAfter(last);
+  var allowed = qpdfPageHeight_(page) - 8;
+  var used = qpdfHeight_(page, 1, last);
+  var spacerHeight = Math.floor(
+    allowed - used - QPDF_CONTINUATION_HEIGHT
+  );
 
+  // Keep the continuation label at the physical bottom-right of the page.
+  // Blank spacer rows use the already available white space; no content rows,
+  // page boundaries, or item placement are changed.
+  while (spacerHeight > 0) {
+    page.insertRowAfter(last);
+    var spacerRow = page.getMaxRows();
+    var chunk = Math.min(400, spacerHeight);
+    var spacer = page.getRange(
+      spacerRow,
+      1,
+      1,
+      page.getLastColumn()
+    );
+    spacer.clear();
+    spacer.setBackground('#ffffff');
+    spacer.setBorder(false, false, false, false, false, false);
+    page.setRowHeight(spacerRow, Math.max(1, chunk));
+    last = spacerRow;
+    spacerHeight -= chunk;
+  }
+
+  page.insertRowAfter(last);
   var noteRow = page.getMaxRows();
   var note = page.getRange(
     noteRow,
@@ -508,8 +534,9 @@ function qpdfAddContinuationNote_(page) {
   note.setHorizontalAlignment('right');
   note.setVerticalAlignment('middle');
   note.setFontSize(7);
+  note.setFontWeight('bold');
+  note.setFontStyle('normal');
   note.setFontColor('#777777');
-  note.setFontStyle('italic');
   page.setRowHeight(noteRow, QPDF_CONTINUATION_HEIGHT);
 }
 
