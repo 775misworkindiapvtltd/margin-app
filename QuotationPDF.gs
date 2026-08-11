@@ -321,9 +321,32 @@ function qpdfPlan_(sheet, visibleEnd, termsRow, lastRow) {
     }
   }
 
-  // Technical terms are intentionally headerless. If the block is too long,
-  // split it at row boundaries; the final Thanks/name row is never discarded.
+  // Put the complete terms block on the last content page when it fits.
+  // This is preferred over creating a new page: in the user's quotation the
+  // terms block fits in the blank space below Total Price on page 2.
+  var termsAppended = false;
   if (termsRows.length) {
+    var finalContentPage = pages[pages.length - 1];
+    var termsHeight = qpdfRowsHeight_(termsRows);
+    var reservedNote = finalContentPage.continuation === false
+      ? 0
+      : QPDF_CONTINUATION_HEIGHT;
+    var combinedHeight = finalContentPage.height + termsHeight + reservedNote;
+    var canAppendTerms = combinedHeight <=
+      pageHeight * QPDF_MAX_COMPRESSION_OVERFLOW;
+
+    if (canAppendTerms) {
+      finalContentPage.end = termsRows[termsRows.length - 1].row;
+      finalContentPage.height = combinedHeight;
+      finalContentPage.kind = 'content_with_terms';
+      termsAppended = true;
+    }
+  }
+
+  // Technical terms remain headerless. If the complete block does not fit on
+  // the final content page, split it at row boundaries; the final Thanks/name
+  // row is never discarded.
+  if (termsRows.length && !termsAppended) {
     var termsCapacity = Math.max(
       1,
       pageHeight - QPDF_CONTINUATION_HEIGHT
