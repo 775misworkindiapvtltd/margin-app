@@ -41,18 +41,25 @@ function generateQuotationPDF() {
 
   var mergeMap = buildMergeMap_(merges);
 
-  // Find last filled item row
+  // Find last filled item row - check column B onwards (skip Sr No column A)
   var lastFilledItem = ITEM_FIRST_ROW - 1;
   for (var r = ITEM_FIRST_ROW - 1; r < ITEM_LAST_ROW; r++) {
-    for (var c = 0; c < displayValues[r].length; c++) {
+    var hasData = false;
+    for (var c = 1; c < displayValues[r].length; c++) {
       if (displayValues[r][c] && String(displayValues[r][c]).trim() !== '') {
-        lastFilledItem = r + 1;
+        hasData = true;
         break;
       }
+    }
+    if (hasData) {
+      lastFilledItem = r + 1;
     }
   }
   var visibleItemEnd = Math.max(lastFilledItem, ITEM_FIRST_ROW + MIN_VISIBLE_ITEMS - 1);
   visibleItemEnd = Math.min(visibleItemEnd, ITEM_LAST_ROW);
+  Logger.log('Last filled item row: ' + lastFilledItem);
+  Logger.log('Visible items: row ' + ITEM_FIRST_ROW + ' to ' + visibleItemEnd);
+  Logger.log('Rows being skipped: ' + (visibleItemEnd + 1) + ' to ' + ITEM_LAST_ROW);
 
   // Find TECHNICAL TERMS row
   var termsRow = lastRow;
@@ -62,13 +69,18 @@ function generateQuotationPDF() {
       break;
     }
   }
+  Logger.log('TECHNICAL TERMS at row: ' + termsRow);
 
-  // Visible rows (skip blank items)
+  // Build visible rows list - SKIP blank item rows
   var visibleRows = [];
   for (var r = 1; r <= lastRow; r++) {
-    if (r > visibleItemEnd && r <= ITEM_LAST_ROW) continue;
+    // Skip rows between visibleItemEnd+1 and ITEM_LAST_ROW
+    if (r > visibleItemEnd && r <= ITEM_LAST_ROW) {
+      continue;
+    }
     visibleRows.push(r);
   }
+  Logger.log('Total visible rows: ' + visibleRows.length + ' out of ' + lastRow);
 
   // Check overflow
   var totalColWidth = 0;
@@ -80,19 +92,18 @@ function generateQuotationPDF() {
   var itemsPx = 0;
   for (var r = ITEM_FIRST_ROW; r <= visibleItemEnd; r++) itemsPx += rowHeights[r - 1] * scale;
   var middlePx = 0;
-  for (var r = visibleItemEnd + 1; r < termsRow; r++) {
-    if (r > ITEM_LAST_ROW) middlePx += rowHeights[r - 1] * scale;
-  }
+  for (var r = ITEM_LAST_ROW + 1; r < termsRow; r++) middlePx += rowHeights[r - 1] * scale;
 
   var itemsOverflow = (headerPx + itemsPx + middlePx) > 1000;
+  Logger.log('Overflow: ' + itemsOverflow + ' (header=' + Math.round(headerPx) + ' items=' + Math.round(itemsPx) + ' middle=' + Math.round(middlePx) + ')');
 
-  // Get images
-  var images = getImages_(sheet);
+  // Get images as base64
+  var imageData = getImagesBase64_(sheet);
 
   // Build HTML
-  var html = buildHtml_(displayValues, colWidths, rowHeights, backgrounds, fontColors, fontSizes, fontWeights, fontFamilies, fontStyles, hAligns, vAligns, mergeMap, visibleRows, termsRow, itemsOverflow, scale, images, lastCol);
+  var html = buildHtml_(displayValues, colWidths, rowHeights, backgrounds, fontColors, fontSizes, fontWeights, fontFamilies, fontStyles, hAligns, vAligns, mergeMap, visibleRows, termsRow, itemsOverflow, scale, imageData, lastCol);
 
-  // PDF
+  // Convert to PDF
   var pdfBlob = Utilities.newBlob(html, 'text/html', 'q.html').getAs('application/pdf');
   var folder = DriveApp.getFolderById(PDF_FOLDER_ID);
   var fileName = buildFileName_(sheet);
@@ -102,7 +113,7 @@ function generateQuotationPDF() {
   return file.getUrl();
 }
 
-function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, visibleRows, termsRow, itemsOverflow, scale, images, lastCol) {
+function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, visibleRows, termsRow, itemsOverflow, scale, imageData, lastCol) {
   var css = '@page{size:A4 portrait;margin:10mm 8mm 10mm 8mm;}';
   css += '*{box-sizing:border-box;}';
   css += 'body{margin:0;padding:0;font-family:Roboto,Arial,sans-serif;font-size:9pt;}';
@@ -118,14 +129,12 @@ function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, 
 
   var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + css + '</style></head><body>';
 
-  // Colgroup
   var colgroup = '<colgroup>';
   for (var c = 0; c < lastCol; c++) {
     colgroup += '<col style="width:' + Math.round(colWidths[c] * scale) + 'px;">';
   }
   colgroup += '</colgroup>';
 
-  // Main table
   html += '<table>' + colgroup;
 
   // THEAD rows 1-25
@@ -133,7 +142,7 @@ function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, 
   for (var i = 0; i < visibleRows.length; i++) {
     var r = visibleRows[i];
     if (r > HEADER_LAST_ROW) break;
-    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, images, lastCol);
+    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, imageData, lastCol);
   }
   html += '</thead>';
 
@@ -143,16 +152,16 @@ function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, 
     var r = visibleRows[i];
     if (r <= HEADER_LAST_ROW) continue;
     if (r >= termsRow) break;
-    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, images, lastCol);
+    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, imageData, lastCol);
   }
   html += '</tbody></table>';
 
-  // TERMS BLOCK - never splits across pages
+  // TERMS BLOCK - never splits
   html += '<div class="terms-section"><table>' + colgroup + '<tbody>';
   for (var i = 0; i < visibleRows.length; i++) {
     var r = visibleRows[i];
     if (r < termsRow) continue;
-    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, images, lastCol);
+    html += makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, imageData, lastCol);
   }
   html += '</tbody></table></div>';
 
@@ -160,7 +169,7 @@ function buildHtml_(data, colWidths, rowHeights, bgs, fcs, fss, fws, ffs, fsts, 
   return html;
 }
 
-function makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, images, lastCol) {
+function makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, mergeMap, scale, imageData, lastCol) {
   var ri = r - 1;
   var rh = Math.max(Math.round(rowHeights[ri] * scale * 0.75), 12);
   var html = '<tr style="height:' + rh + 'px;">';
@@ -186,10 +195,11 @@ function makeRow_(r, data, rowHeights, bgs, fcs, fss, fws, ffs, fsts, hAs, vAs, 
     var va = vAs[ri][c];
     var val = data[ri][c] || '';
 
+    // Check for image
     var imgTag = '';
-    for (var x = 0; x < images.length; x++) {
-      if (images[x].row === r && images[x].col === (c + 1)) {
-        imgTag = '<img src="' + images[x].url + '" style="max-height:' + (rh - 2) + 'px;max-width:100%;">';
+    for (var x = 0; x < imageData.length; x++) {
+      if (imageData[x].row === r && imageData[x].col === (c + 1)) {
+        imgTag = '<img src="' + imageData[x].data + '" style="max-height:' + Math.round(rh * 1.2) + 'px;max-width:100%;">';
         break;
       }
     }
@@ -240,25 +250,35 @@ function buildMergeMap_(merges) {
   return {starts: starts, skip: skip};
 }
 
-function getImages_(sheet) {
+function getImagesBase64_(sheet) {
   var imgs = [];
   try {
-    var list = sheet.getImages();
-    for (var i = 0; i < list.length; i++) {
-      var a = list[i].getAnchorCell();
-      var u = list[i].getUrl();
-      if (u) imgs.push({row: a.getRow(), col: a.getColumn(), url: u});
+    var sheetImages = sheet.getImages();
+    for (var i = 0; i < sheetImages.length; i++) {
+      var img = sheetImages[i];
+      var anchor = img.getAnchorCell();
+      var blob = img.getBlob();
+      var contentType = blob.getContentType();
+      var b64 = Utilities.base64Encode(blob.getBytes());
+      var dataUri = 'data:' + contentType + ';base64,' + b64;
+      imgs.push({
+        row: anchor.getRow(),
+        col: anchor.getColumn(),
+        data: dataUri
+      });
     }
-  } catch(e) {}
+  } catch(e) {
+    Logger.log('Image error: ' + e.message);
+  }
   return imgs;
 }
 
 function esc_(s) {
   var str = String(s);
-  str = str.replace(/&/g, '&' + 'amp;');
-  str = str.replace(/</g, '&' + 'lt;');
-  str = str.replace(/>/g, '&' + 'gt;');
-  str = str.replace(/"/g, '&' + 'quot;');
+  str = str.replace(/&/g, String.fromCharCode(38) + 'amp;');
+  str = str.replace(/</g, String.fromCharCode(38) + 'lt;');
+  str = str.replace(/>/g, String.fromCharCode(38) + 'gt;');
+  str = str.replace(/"/g, String.fromCharCode(38) + 'quot;');
   str = str.replace(/\n/g, '<br>');
   return str;
 }
