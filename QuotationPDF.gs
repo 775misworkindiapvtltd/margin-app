@@ -533,22 +533,26 @@ function qpdfAddProductsContinuedLabel_(page) {
   // Insert the label immediately before the repeated item-table header.
   page.insertRowBefore(QPDF_HEADER_LAST);
   var labelRow = QPDF_HEADER_LAST;
-  var range = page.getRange(
+  var labelRange = page.getRange(
     labelRow,
     1,
     1,
     page.getLastColumn()
   );
+  var labelCell = page.getRange(labelRow, 1);
 
-  range.merge();
-  range.setValue('PRODUCTS - CONTINUED');
-  range.setBackground('#F4CCCC');
-  range.setFontColor('#7F0000');
-  range.setFontSize(8);
-  range.setFontWeight('bold');
-  range.setHorizontalAlignment('left');
-  range.setVerticalAlignment('middle');
-  range.setBorder(
+  // Do not merge this row. A copied template may contain partial merged
+  // ranges, and Apps Script then throws "select an entire row or column".
+  // A normal left-aligned cell with a full-row background is safer and keeps
+  // the continued-products heading visible without changing the header merges.
+  labelCell.setValue('PRODUCTS - CONTINUED');
+  labelRange.setBackground('#F4CCCC');
+  labelRange.setFontColor('#7F0000');
+  labelRange.setFontSize(8);
+  labelRange.setFontWeight('bold');
+  labelRange.setHorizontalAlignment('left');
+  labelRange.setVerticalAlignment('middle');
+  labelRange.setBorder(
     true,
     true,
     true,
