@@ -369,45 +369,33 @@ function qpdfRowsHeight_(rows) {
 }
 
 function qpdfMakePage_(template, book, number, plan) {
-  var page = book.insertSheet('QPDF_PAGE_' + number);
-  var lastColumn = template.getLastColumn();
-
-  if (lastColumn > page.getMaxColumns()) {
-    page.insertColumnsAfter(
-      page.getMaxColumns(),
-      lastColumn - page.getMaxColumns()
-    );
-  }
-
+  // Copy the whole template so drawings/images are preserved. The previous
+  // approach called OverGridImage.getBlob(), which is not available in Apps
+  // Script and caused the execution to stall while logging image errors.
+  var page = template.copyTo(book);
+  page.setName('QPDF_PAGE_' + number);
   page.setHiddenGridlines(true);
   page.setFrozenRows(0);
+  page.showRows(1, page.getMaxRows());
 
-  var actualEnd;
+  qpdfRemoveWrongImages_(page, plan.start, plan.end, plan.header);
+  qpdfDeleteAfter_(page, plan.end);
 
   if (plan.header) {
-    qpdfCopySegment_(template, page, 1, QPDF_HEADER_LAST, 1);
-    qpdfCopySegment_(
-      template,
-      page,
-      plan.start,
-      plan.end,
-      QPDF_HEADER_LAST + 1
-    );
-    actualEnd = QPDF_HEADER_LAST + 1 +
-      (plan.end - plan.start + 1);
-  } else {
-    qpdfCopySegment_(template, page, plan.start, plan.end, 1);
-    actualEnd = plan.end - plan.start + 1;
+    var gap = plan.start - (QPDF_HEADER_LAST + 1);
+    if (gap > 0) {
+      page.deleteRows(QPDF_HEADER_LAST + 1, gap);
+    }
+  } else if (plan.start > 1) {
+    page.deleteRows(1, plan.start - 1);
   }
-
-  qpdfTrimNewPage_(page, actualEnd);
 
   if (plan.continuation) {
     qpdfAddContinuationNote_(page);
   }
 
-  // Give the final terms/Thanks row enough room before applying only a small
-  // page-level compaction if the temporary page is slightly oversized.
+  // Give the final terms/Thanks row enough room before compacting only a
+  // slightly oversized temporary page.
   if (plan.kind === 'terms') {
     var finalRow = page.getMaxRows();
     page.setRowHeight(
@@ -420,97 +408,29 @@ function qpdfMakePage_(template, book, number, plan) {
   SpreadsheetApp.flush();
 }
 
-function qpdfCopySegment_(source, target, sourceStart, sourceEnd, targetStart) {
-  var rowCount = sourceEnd - sourceStart + 1;
-  if (rowCount <= 0) return;
-
-  var sourceRange = source.getRange(
-    sourceStart,
-    1,
-    rowCount,
-    source.getLastColumn()
-  );
-  var targetRange = target.getRange(
-    targetStart,
-    1,
-    rowCount,
-    source.getLastColumn()
-  );
-
-  sourceRange.copyTo(
-    targetRange,
-    SpreadsheetApp.CopyPasteType.PASTE_NORMAL,
-    false
-  );
-
-  targetRange.breakApart();
-
-  var merges = sourceRange.getMergedRanges();
-  for (var i = 0; i < merges.length; i++) {
-    var merge = merges[i];
-    if (
-      merge.getRow() < sourceStart ||
-      merge.getLastRow() > sourceEnd
-    ) {
-      continue;
-    }
-
-    target.getRange(
-      targetStart + merge.getRow() - sourceStart,
-      merge.getColumn(),
-      merge.getNumRows(),
-      merge.getNumColumns()
-    ).merge();
+function qpdfDeleteAfter_(page, lastKeptRow) {
+  var extra = page.getMaxRows() - lastKeptRow;
+  if (extra > 0) {
+    page.deleteRows(lastKeptRow + 1, extra);
   }
-
-  for (var r = 0; r < rowCount; r++) {
-    target.setRowHeight(
-      targetStart + r,
-      source.getRowHeight(sourceStart + r)
-    );
-  }
-
-  for (var c = 1; c <= source.getLastColumn(); c++) {
-    target.setColumnWidth(c, source.getColumnWidth(c));
-  }
-
-  qpdfCopyImages_(
-    source,
-    target,
-    sourceStart,
-    sourceEnd,
-    targetStart
-  );
 }
 
-function qpdfCopyImages_(source, target, sourceStart, sourceEnd, targetStart) {
-  var images = source.getImages();
+function qpdfRemoveWrongImages_(page, bodyStart, bodyEnd, hasHeader) {
+  var images = page.getImages();
 
-  for (var i = 0; i < images.length; i++) {
-    var image = images[i];
-    var anchor = image.getAnchorCell();
-    var sourceRow = anchor.getRow();
+  for (var i = images.length - 1; i >= 0; i--) {
+    var row = images[i].getAnchorCell().getRow();
+    var keepHeader = hasHeader && row >= 1 && row <= QPDF_HEADER_LAST;
+    var keepBody = row >= bodyStart && row <= bodyEnd;
 
-    if (sourceRow < sourceStart || sourceRow > sourceEnd) {
-      continue;
-    }
-
-    try {
-      var copy = target.insertImage(
-        image.getBlob(),
-        anchor.getColumn(),
-        targetStart + sourceRow - sourceStart
-      );
-      copy.setWidth(image.getWidth());
-      copy.setHeight(image.getHeight());
+    if (!keepHeader && !keepBody) {
       try {
-        copy.setZIndex(image.getZIndex());
-      } catch (zError) {}
-    } catch (error) {
-      Logger.log(
-        'Image copy skipped at row ' +
-        sourceRow + ': ' + error.message
-      );
+        images[i].remove();
+      } catch (error) {
+        Logger.log(
+          'Image removal skipped at row ' + row + ': ' + error.message
+        );
+      }
     }
   }
 }
