@@ -441,6 +441,15 @@ function qpdfMakePage_(template, book, number, plan) {
     page.deleteRows(1, plan.start - 1);
   }
 
+  // Close the table cleanly when this page continues. After rows are deleted,
+  // plan.end has shifted to the final row now visible on this page.
+  var visibleContentEnd = plan.header
+    ? QPDF_HEADER_LAST + (plan.end - plan.start + 1)
+    : plan.end - plan.start + 1;
+  if (plan.continuation) {
+    qpdfAddBottomBorder_(page, visibleContentEnd);
+  }
+
   // Preserve the final Thanks/name row before fitting the content page.
   if (plan.kind === 'terms' || plan.kind === 'content_with_terms') {
     var finalRow = page.getMaxRows();
@@ -486,6 +495,30 @@ function qpdfRemoveWrongImages_(page, bodyStart, bodyEnd, hasHeader) {
       }
     }
   }
+}
+
+function qpdfAddBottomBorder_(page, row) {
+  if (row < 1 || row > page.getMaxRows()) return;
+
+  var range = page.getRange(
+    row,
+    1,
+    1,
+    page.getLastColumn()
+  );
+
+  // Leave existing vertical/internal borders untouched; only close the
+  // bottom edge of the final row before the page break.
+  range.setBorder(
+    null,
+    null,
+    true,
+    null,
+    null,
+    null,
+    '#999999',
+    SpreadsheetApp.BorderStyle.SOLID
+  );
 }
 
 function qpdfTrimNewPage_(page, lastKeptRow) {
@@ -543,7 +576,7 @@ function qpdfAddContinuationNote_(page) {
   note.setValue('Cont. on next page');
   note.setHorizontalAlignment('right');
   note.setVerticalAlignment('middle');
-  note.setFontSize(8);
+  note.setFontSize(10);
   note.setFontWeight('bold');
   note.setFontStyle('normal');
   note.setFontColor('#777777');
