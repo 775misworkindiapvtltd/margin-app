@@ -97,6 +97,13 @@ function generateQuotationPDF() {
     Logger.log('Item overflow: ' + plan.itemOverflow);
     Logger.log('Page plan: ' + JSON.stringify(plan.summary));
 
+    // Performance optimization only: remove rows after the last content row
+    // once, before copying page tabs. This does not alter any planned row,
+    // height, image, column width, or page boundary; it only prevents every
+    // template.copyTo() from carrying unused blank rows.
+    qpdfDeleteAfter_(template, lastRow);
+    SpreadsheetApp.flush();
+
     var pageNo = 0;
     for (var i = 0; i < plan.pages.length; i++) {
       pageNo++;
