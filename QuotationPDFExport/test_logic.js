@@ -39,6 +39,14 @@ function computeSpacerExtraPx_(spaceLeftOnCurrentPage, footerHeight) {
   return Math.round(extra);
 }
 
+function computePagesNeeded_(headerHeightPx, contentHeightPx, pageHeightPx) {
+  if (pageHeightPx <= 0) {
+    return 1;
+  }
+  var totalHeight = headerHeightPx + contentHeightPx;
+  return Math.max(1, Math.ceil(totalHeight / pageHeightPx));
+}
+
 // ---------- test helpers ----------
 var passed = 0;
 var failed = 0;
@@ -140,6 +148,45 @@ var TOTAL_ITEM_ROWS = 42; // rows 26..67 inclusive
 (function () {
   var result = computeSpacerExtraPx_(250, 250);
   assertEqual(result, 0, 'footer exactly equal to remaining space -> fits, no push needed');
+})();
+
+// ---------- Header-repeat decision (computePagesNeeded_) ----------
+
+// Test 11: header + items fit entirely within one page -> 1 page needed -> header must NOT repeat
+(function () {
+  var result = computePagesNeeded_(300, 400, 1050);
+  assertEqual(result, 1, 'header(300)+items(400) fit in one page(1050) -> 1 page -> no header repeat');
+})();
+
+// Test 12: header + items exceed one page -> 2 pages needed -> header SHOULD repeat
+(function () {
+  var result = computePagesNeeded_(300, 900, 1050);
+  assertEqual(result, 2, 'header(300)+items(900) exceed one page(1050) -> 2 pages -> header repeats');
+})();
+
+// Test 13: header + items exactly equal to one page -> still 1 page -> no repeat
+(function () {
+  var result = computePagesNeeded_(300, 750, 1050);
+  assertEqual(result, 1, 'header(300)+items(750) exactly equal to page height(1050) -> 1 page -> no repeat');
+})();
+
+// Test 14: this is the scenario from the request -- items fit on page 1, only the
+// Terms block spills to page 2. computePagesNeeded_ is evaluated on header+items
+// only (NOT including the terms block), so it correctly reports 1 page even though
+// the overall document needs 2 pages once the terms block is added.
+(function () {
+  var headerHeightPx = 300;
+  var itemsContentHeightPx = 500; // items + charges/total, fits comfortably on page 1
+  var pageHeightPx = 1050;
+  var pagesForHeaderPlusItems = computePagesNeeded_(headerHeightPx, itemsContentHeightPx, pageHeightPx);
+  assertEqual(pagesForHeaderPlusItems, 1,
+    'items fit on page 1 (terms block pushed to page 2 separately) -> header+items = 1 page -> header must NOT repeat on the terms-only page 2');
+})();
+
+// Test 15: invalid/zero page height guards against divide-by-zero -> defaults to 1 page
+(function () {
+  var result = computePagesNeeded_(300, 400, 0);
+  assertEqual(result, 1, 'zero page height -> guarded fallback of 1 page (no repeat)');
 })();
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
