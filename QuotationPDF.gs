@@ -26,8 +26,9 @@ var QPDF_PAGE_HEIGHT = 1050;
 var QPDF_CONTINUATION_HEIGHT = 28;
 var QPDF_CONTINUATION_BOTTOM_MARGIN = 24;
 var QPDF_CONTINUATION_MIN_SPACER = 120;
-var QPDF_MAX_COMPRESSION_OVERFLOW = 1.08;
+var QPDF_MAX_COMPRESSION_OVERFLOW = 1.16;
 var QPDF_MIN_ROW_HEIGHT = 8;
+var QPDF_PRODUCT_CONTINUATION_HEIGHT = 20;
 // Use the available blank space on page 1 for about four more product rows.
 // Later item pages keep the normal capacity so the continuation remains stable.
 var QPDF_EXTRA_FIRST_PAGE_ROWS = 4;
@@ -441,10 +442,17 @@ function qpdfMakePage_(template, book, number, plan) {
     page.deleteRows(1, plan.start - 1);
   }
 
+  var continuedProductsLabel = false;
+  if (plan.header && plan.start > QPDF_ITEM_FIRST) {
+    qpdfAddProductsContinuedLabel_(page);
+    continuedProductsLabel = true;
+  }
+
   // Close the table cleanly when this page continues. After rows are deleted,
   // plan.end has shifted to the final row now visible on this page.
   var visibleContentEnd = plan.header
-    ? QPDF_HEADER_LAST + (plan.end - plan.start + 1)
+    ? QPDF_HEADER_LAST + (plan.end - plan.start + 1) +
+      (continuedProductsLabel ? 1 : 0)
     : plan.end - plan.start + 1;
   if (plan.continuation) {
     qpdfAddBottomBorder_(page, visibleContentEnd);
@@ -519,6 +527,38 @@ function qpdfAddBottomBorder_(page, row) {
     '#999999',
     SpreadsheetApp.BorderStyle.SOLID
   );
+}
+
+function qpdfAddProductsContinuedLabel_(page) {
+  // Insert the label immediately before the repeated item-table header.
+  page.insertRowBefore(QPDF_HEADER_LAST);
+  var labelRow = QPDF_HEADER_LAST;
+  var range = page.getRange(
+    labelRow,
+    1,
+    1,
+    page.getLastColumn()
+  );
+
+  range.merge();
+  range.setValue('PRODUCTS - CONTINUED');
+  range.setBackground('#F4CCCC');
+  range.setFontColor('#7F0000');
+  range.setFontSize(8);
+  range.setFontWeight('bold');
+  range.setHorizontalAlignment('left');
+  range.setVerticalAlignment('middle');
+  range.setBorder(
+    true,
+    true,
+    true,
+    true,
+    null,
+    null,
+    '#D32F2F',
+    SpreadsheetApp.BorderStyle.SOLID
+  );
+  page.setRowHeight(labelRow, QPDF_PRODUCT_CONTINUATION_HEIGHT);
 }
 
 function qpdfTrimNewPage_(page, lastKeptRow) {
