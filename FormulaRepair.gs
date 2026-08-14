@@ -5,32 +5,42 @@
  * each marked column is copied to row 20 through the sheet's last used row.
  * Row 19 is never overwritten because it is the marker/header row.
  *
- * Run copyDarkRedRow19Formulas() while the required quotation sheet is active.
- * A sheet name can also be supplied, for example:
- *   copyDarkRedRow19Formulas('QUOTATION');
+ * The target sheet in this project is named QUOT. A sheet name can also be
+ * supplied explicitly, for example:
+ *   copyDarkRedRow19Formulas('QUOT');
  *
- * @param {string=} sheetName Optional target sheet name. Active sheet is used
- *   when omitted.
+ * @param {string=} sheetName Optional target sheet name. QUOT is used when
+ *   omitted.
  * @return {Object} A summary of the columns and cells updated.
  */
 function copyDarkRedRow19Formulas(sheetName) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = sheetName ? ss.getSheetByName(String(sheetName)) : ss.getActiveSheet();
-  if (!sheet) {
-    throw new Error('Sheet not found: ' + sheetName);
+  if (!ss) {
+    throw new Error('No active spreadsheet is available. Open the QUOT spreadsheet and try again.');
+  }
+
+  // QUOT is the target tab. A Sheet object is also accepted if another
+  // function calls this helper with SpreadsheetApp.getActiveSheet().
+  var target = sheetName || 'QUOT';
+  var sheet = typeof target === 'object' && typeof target.getRange === 'function'
+    ? target
+    : ss.getSheetByName(String(target));
+  if (!sheet || typeof sheet.getRange !== 'function') {
+    throw new Error('Sheet not found: ' + String(target) + '. Expected the sheet tab named QUOT.');
   }
 
   var markerColor = '#e60a18';
   var markerRow = 19;
   var sourceRow = 18;
   var firstTargetRow = 20;
-  var lastRow = sheet.getLastRow();
-  var lastColumn = Math.max(sheet.getLastColumn(), sheet.getMaxColumns());
+  var dataRange = sheet.getDataRange();
+  var lastRow = dataRange.getRow() + dataRange.getNumRows() - 1;
+  var lastColumn = dataRange.getColumn() + dataRange.getNumColumns() - 1;
 
   if (sheet.getMaxRows() < markerRow || lastColumn < 1) {
     return {
       status: 'nothing_to_copy',
-      sheetName: sheet.getName(),
+      sheetName: getSheetName_(sheet),
       markerColor: markerColor,
       markerColumns: [],
       copiedCells: 0,
@@ -85,7 +95,7 @@ function copyDarkRedRow19Formulas(sheetName) {
 
   return {
     status: copiedColumns.length ? 'ok' : 'nothing_to_copy',
-    sheetName: sheet.getName(),
+    sheetName: getSheetName_(sheet),
     markerColor: markerColor,
     markerRow: markerRow,
     sourceRow: sourceRow,
@@ -96,6 +106,16 @@ function copyDarkRedRow19Formulas(sheetName) {
     skippedColumns: skippedColumns,
     copiedCells: copiedCells
   };
+}
+
+/**
+ * Returns a display name without making the repair depend on getName().
+ *
+ * @param {Object} sheet Google Sheets Sheet object.
+ * @return {string} Sheet name when available.
+ */
+function getSheetName_(sheet) {
+  return typeof sheet.getName === 'function' ? sheet.getName() : 'QUOT';
 }
 
 /**
