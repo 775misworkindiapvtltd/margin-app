@@ -1,58 +1,44 @@
 /**
- * Copies formulas for every column marked dark red (#e60a18) in row 19.
+ * Finds #e60a18 in row 19 of the QUOT sheet and copies formulas down.
  *
- * Row 18 is treated as the formula template row. The template formula from
- * each marked column is copied to row 20 through the sheet's last used row.
- * Row 19 is never overwritten because it is the marker/header row.
- *
- * The target sheet in this project is named QUOT. A sheet name can also be
- * supplied explicitly, for example:
- *   copyDarkRedRow19Formulas('QUOT');
- *
- * @param {string=} sheetName Optional target sheet name. QUOT is used when
- *   omitted.
- * @return {Object} A summary of the columns and cells updated.
+ * Row 18 is the preferred formula template. If row 18 is empty in a marked
+ * column, the existing formula in row 20 is used as the fallback template.
+ * Formulas are copied into row 20 through the last used row.
  */
-function copyDarkRedRow19Formulas(sheetName) {
+function copyDarkRedRow19Formulas() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
-    throw new Error('No active spreadsheet is available. Open the QUOT spreadsheet and try again.');
+    throw new Error('No active spreadsheet is available.');
   }
 
-  // QUOT is the target tab. A Sheet object is also accepted if another
-  // function calls this helper with SpreadsheetApp.getActiveSheet().
-  var target = sheetName || 'QUOT';
-  var sheet = typeof target === 'object' && typeof target.getRange === 'function'
-    ? target
-    : ss.getSheetByName(String(target));
-  if (!sheet || typeof sheet.getRange !== 'function') {
-    throw new Error('Sheet not found: ' + String(target) + '. Expected the sheet tab named QUOT.');
+  // Important: this returns a Sheet object. Do not use var sheet = 'QUOT'.
+  var sheet = ss.getSheetByName('QUOT');
+  if (!sheet) {
+    throw new Error('Sheet tab "QUOT" was not found.');
   }
 
   var markerColor = '#e60a18';
   var markerRow = 19;
-  var sourceRow = 18;
+  var preferredSourceRow = 18;
   var firstTargetRow = 20;
-  var dataRange = sheet.getDataRange();
-  var lastRow = dataRange.getRow() + dataRange.getNumRows() - 1;
-  var lastColumn = dataRange.getColumn() + dataRange.getNumColumns() - 1;
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getMaxColumns();
 
-  if (sheet.getMaxRows() < markerRow || lastColumn < 1) {
-    return {
-      status: 'nothing_to_copy',
-      sheetName: getSheetName_(sheet),
-      markerColor: markerColor,
-      markerColumns: [],
-      copiedCells: 0,
-      lastRow: lastRow
-    };
+  if (lastRow < firstTargetRow) {
+    var noRowsMessage = 'No target rows found in QUOT.';
+    ss.toast(noRowsMessage, 'Formula Repair', 8);
+    Logger.log(noRowsMessage);
+    return { status: 'nothing_to_copy', message: noRowsMessage };
   }
 
   var markerBackgrounds = sheet
     .getRange(markerRow, 1, 1, lastColumn)
     .getBackgrounds()[0];
-  var sourceFormulas = sheet
-    .getRange(sourceRow, 1, 1, lastColumn)
+  var formulasInRow18 = sheet
+    .getRange(preferredSourceRow, 1, 1, lastColumn)
+    .getFormulas()[0];
+  var formulasInRow20 = sheet
+    .getRange(firstTargetRow, 1, 1, lastColumn)
     .getFormulas()[0];
 
   var markerColumns = [];
@@ -61,28 +47,28 @@ function copyDarkRedRow19Formulas(sheetName) {
   var copiedCells = 0;
 
   for (var column = 1; column <= lastColumn; column++) {
-    var background = String(markerBackgrounds[column - 1] || '').trim().toLowerCase();
+    var background = String(markerBackgrounds[column - 1] || '')
+      .trim()
+      .toLowerCase();
     if (background !== markerColor) continue;
 
-    markerColumns.push(columnToLetter_(column));
-    var formula = String(sourceFormulas[column - 1] || '').trim();
-    if (!formula) {
-      skippedColumns.push({
-        column: columnToLetter_(column),
-        reason: 'No formula found in row ' + sourceRow
-      });
-      continue;
-    }
+    var columnName = columnToLetter_(column);
+    markerColumns.push(columnName);
 
-    if (lastRow < firstTargetRow) {
-      copiedColumns.push(columnToLetter_(column));
+    var sourceRow = formulasInRow18[column - 1]
+      ? preferredSourceRow
+      : (formulasInRow20[column - 1] ? firstTargetRow : 0);
+    if (!sourceRow) {
+      skippedColumns.push({
+        column: columnName,
+        reason: 'No formula in row 18 or row 20'
+      });
       continue;
     }
 
     var sourceCell = sheet.getRange(sourceRow, column);
     for (var row = firstTargetRow; row <= lastRow; row++) {
-      // PASTE_FORMULA preserves relative references when the row-18 formula is
-      // copied into each destination row and does not overwrite formatting.
+      // PASTE_FORMULA adjusts relative row references for each destination row.
       sourceCell.copyTo(
         sheet.getRange(row, column),
         SpreadsheetApp.CopyPasteType.PASTE_FORMULA,
@@ -90,15 +76,16 @@ function copyDarkRedRow19Formulas(sheetName) {
       );
       copiedCells++;
     }
-    copiedColumns.push(columnToLetter_(column));
+    copiedColumns.push(columnName + ' (from row ' + sourceRow + ')');
   }
 
-  return {
-    status: copiedColumns.length ? 'ok' : 'nothing_to_copy',
-    sheetName: getSheetName_(sheet),
+  var status = copiedCells ? 'ok' : 'nothing_to_copy';
+  var summary = {
+    status: status,
+    sheetName: 'QUOT',
     markerColor: markerColor,
     markerRow: markerRow,
-    sourceRow: sourceRow,
+    preferredSourceRow: preferredSourceRow,
     firstTargetRow: firstTargetRow,
     lastRow: lastRow,
     markerColumns: markerColumns,
@@ -106,20 +93,17 @@ function copyDarkRedRow19Formulas(sheetName) {
     skippedColumns: skippedColumns,
     copiedCells: copiedCells
   };
+
+  var message = copiedCells
+    ? 'Copied ' + copiedCells + ' formulas in ' + copiedColumns.join(', ')
+    : 'No formulas copied. Red columns: ' + (markerColumns.join(', ') || 'none');
+  ss.toast(message, 'Formula Repair', 10);
+  Logger.log(JSON.stringify(summary));
+  return summary;
 }
 
 /**
- * Returns a display name without making the repair depend on getName().
- *
- * @param {Object} sheet Google Sheets Sheet object.
- * @return {string} Sheet name when available.
- */
-function getSheetName_(sheet) {
-  return typeof sheet.getName === 'function' ? sheet.getName() : 'QUOT';
-}
-
-/**
- * Converts a 1-based sheet column number to its A1 column letters.
+ * Converts a 1-based sheet column number to A1 column letters.
  *
  * @param {number} columnNumber 1-based column number.
  * @return {string} A1 column letters.
