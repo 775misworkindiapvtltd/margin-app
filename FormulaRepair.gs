@@ -1,9 +1,9 @@
 /**
- * Finds #e60a18 in row 19 of the QUOT sheet and copies formulas down.
+ * Finds the exact #e60a18 background in row 19 of the QUOT sheet and copies
+ * the row-18 formula only in those matching columns.
  *
- * Row 18 is the preferred formula template. If row 18 is empty in a marked
- * column, the existing formula in row 20 is used as the fallback template.
- * Formulas are copied into row 20 through the last used row.
+ * Row 19 is used only as the color marker row. Row 18 is always the formula
+ * source, and the formula is copied to row 20 through the last used row.
  */
 function copyDarkRedRow19Formulas() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -37,9 +37,6 @@ function copyDarkRedRow19Formulas() {
   var formulasInRow18 = sheet
     .getRange(preferredSourceRow, 1, 1, lastColumn)
     .getFormulas()[0];
-  var formulasInRow20 = sheet
-    .getRange(firstTargetRow, 1, 1, lastColumn)
-    .getFormulas()[0];
 
   var markerColumns = [];
   var copiedColumns = [];
@@ -50,25 +47,24 @@ function copyDarkRedRow19Formulas() {
     var background = String(markerBackgrounds[column - 1] || '')
       .trim()
       .toLowerCase();
+
+    // This is the required gate: only an exact row-19 #e60a18 match is used.
     if (background !== markerColor) continue;
 
     var columnName = columnToLetter_(column);
     markerColumns.push(columnName);
-
-    var sourceRow = formulasInRow18[column - 1]
-      ? preferredSourceRow
-      : (formulasInRow20[column - 1] ? firstTargetRow : 0);
-    if (!sourceRow) {
+    var sourceFormula = String(formulasInRow18[column - 1] || '').trim();
+    if (!sourceFormula) {
       skippedColumns.push({
         column: columnName,
-        reason: 'No formula in row 18 or row 20'
+        reason: 'No formula found in row 18'
       });
       continue;
     }
 
-    var sourceCell = sheet.getRange(sourceRow, column);
+    var sourceCell = sheet.getRange(preferredSourceRow, column);
     for (var row = firstTargetRow; row <= lastRow; row++) {
-      // PASTE_FORMULA adjusts relative row references for each destination row.
+      // The source is always row 18; row 20 is never used as a source.
       sourceCell.copyTo(
         sheet.getRange(row, column),
         SpreadsheetApp.CopyPasteType.PASTE_FORMULA,
@@ -76,7 +72,7 @@ function copyDarkRedRow19Formulas() {
       );
       copiedCells++;
     }
-    copiedColumns.push(columnName + ' (from row ' + sourceRow + ')');
+    copiedColumns.push(columnName);
   }
 
   var status = copiedCells ? 'ok' : 'nothing_to_copy';
