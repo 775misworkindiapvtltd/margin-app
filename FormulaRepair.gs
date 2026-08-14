@@ -1,4 +1,4 @@
-function copyDarkRedRow19Formulas() {
+function copyLightRedRow20AndClearBelow() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('QUOT');
 
@@ -6,38 +6,43 @@ function copyDarkRedRow19Formulas() {
     throw new Error('QUOT sheet nahi mili.');
   }
 
-  var redColor = '#e60a18';
-  var markerRow = 19;
+  var targetColor = '#f4cccc';
+  var colorRow = 19;
   var sourceRow = 18;
-  var firstTargetRow = 20;
+  var pasteRow = 20;
   var lastRow = sheet.getLastRow();
-  var lastColumn = sheet.getLastColumn();
+  var lastColumn = sheet.getMaxColumns();
 
   // Row 19 ke colors read karo
   var colors = sheet
-    .getRange(markerRow, 1, 1, lastColumn)
+    .getRange(colorRow, 1, 1, lastColumn)
     .getBackgrounds()[0];
 
-  // Sirf row 19 ke exact #e60a18 color wale columns par kaam hoga
   for (var column = 1; column <= lastColumn; column++) {
     var color = String(colors[column - 1] || '')
       .trim()
       .toLowerCase();
 
-    if (color !== redColor) {
+    // Sirf exact #f4cccc color wale columns par kaam hoga
+    if (color !== targetColor) {
       continue;
     }
 
-    var sourceCell = sheet.getRange(sourceRow, column);
-
-    // Row 18 ka formula row 20 se last row tak copy hoga.
-    // Destination blank ho ya filled, dono cases mein overwrite hoga.
-    for (var row = firstTargetRow; row <= lastRow; row++) {
-      sourceCell.copyTo(
-        sheet.getRange(row, column),
+    // Row 18 ka formula sirf row 20 mein paste karo
+    sheet
+      .getRange(sourceRow, column)
+      .copyTo(
+        sheet.getRange(pasteRow, column),
         SpreadsheetApp.CopyPasteType.PASTE_FORMULA,
         false
       );
+
+    // Row 21 se last row tak data clear karo.
+    // Formatting clear nahi hogi, sirf values/formulas clear honge.
+    if (lastRow >= 21) {
+      sheet
+        .getRange(21, column, lastRow - 20, 1)
+        .clearContent();
     }
   }
 }
